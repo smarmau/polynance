@@ -1,0 +1,27 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: SOL
+======================================================================
+
+⚠️  WARNING: Only 96 windows collected
+   Need at least 100 windows for reliable statistical analysis
+   Current results are DESCRIPTIVE ONLY, not statistically valid
+
+Sample Size: 96 windows
+  Up: 43 (44.8%)
+  Down: 53 (55.2%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 56
+  Correct: 43
+  Accuracy: 76.8%
+
+Binomial Test (Is market better than random?):
+  Market is significantly predictive (76.8% accuracy, p=0.0001)
+  ✓ SIGNIFICANT at p < 0.05
+
+ROC AUC Score: 0.796
+  (0.5 = random, 1.0 = perfect)
+  Optimal Threshold: 0.465
+
+CONCLUSION:
+  Insufficient data for conclusions. Keep collecting.
+======================================================================

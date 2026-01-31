@@ -1,0 +1,45 @@
+{
+  "run_timestamp": "2026-01-31T07:57:30.335804",
+  "data": {
+    "total_windows": 2358,
+    "date_range": [
+      "2026-01-24 01:45:00+00:00",
+      "2026-01-30 20:30:00+00:00"
+    ],
+    "up_count": 1137,
+    "down_count": 1221
+  },
+  "strategies": {
+    "t5_0.60_0.40": {
+      "config": {
+        "price_col": "pm_yes_t5",
+        "bull_thresh": 0.6,
+        "bear_thresh": 0.4
+      },
+      "n_trades": 1527,
+      "wins": 1180,
+      "win_rate": 0.7727570399476097,
+      "backtest_flat": {
+        "n_trades": 1527,
+        "wins": 1180,
+        "win_rate": 0.7727570399476097,
+        "total_pnl": 1236.0149999999996,
+        "max_drawdown": -406.53499999999997,
+        "max_drawdown_pct": -33.20821761150138,
+        "sharpe": 12.331416504394227,
+        "avg_pnl": 0.8094400785854634,
+        "std_pnl": 10.2095740744956
+      },
+      "backtest_am": {
+        "n_trades": 1527,
+        "total_pnl": 4686.734059220321,
+        "final_bankroll": 5686.734059220323,
+        "max_drawdown": -434.1749999999995,
+        "max_drawdown_pct": -25.564594427790112,
+        "sharpe": 29.204936961100483,
+        "avg_bet": 41.45734813367811
+      },
+      "tests": {
+        "binomial": {
+          "p_value": 0.0,
+          "significant_at_0.05": 

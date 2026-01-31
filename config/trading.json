@@ -1,0 +1,24 @@
+{
+  "bull_threshold": 0.80,
+  "bear_threshold": 0.20,
+
+  "initial_bankroll": 1000.0,
+  "base_bet": 25.0,
+
+  "fee_rate": 0.001,
+  "spread_cost": 0.005,
+
+  "win_multiplier": 2.0,
+  "loss_multiplier": 0.5,
+  "max_bet_pct": 0.05,
+  "min_bet_pct": 0.10,
+
+  "assets": ["BTC", "ETH", "SOL", "XRP"],
+
+  "data_dir": "data",
+
+  "show_dashboard": true,
+  "dashboard_refresh_rate": 2.0,
+
+  "run_analysis": false
+}

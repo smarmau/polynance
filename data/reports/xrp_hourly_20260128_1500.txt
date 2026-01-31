@@ -1,0 +1,26 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: XRP
+======================================================================
+
+Sample Size: 376 windows
+  Up: 187 (49.7%)
+  Down: 189 (50.3%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 251
+  Correct: 200
+  Accuracy: 79.7%
+
+Binomial Test (Is market better than random?):
+  Market is significantly predictive (79.7% accuracy, p=0.0000)
+  ✓ SIGNIFICANT at p < 0.05
+
+ROC AUC Score: 0.790
+  (0.5 = random, 1.0 = perfect)
+  Optimal Threshold: 0.455
+
+Best Prediction Timepoint: t10
+
+CONCLUSION:
+  ✓ Market shows statistically significant predictive power
+  Accuracy: 79.7% (p < 0.05)
+======================================================================

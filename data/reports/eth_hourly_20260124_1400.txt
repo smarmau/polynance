@@ -1,0 +1,23 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: ETH
+======================================================================
+
+⚠️  WARNING: Only 38 windows collected
+   Need at least 100 windows for reliable statistical analysis
+   Current results are DESCRIPTIVE ONLY, not statistically valid
+
+Sample Size: 38 windows
+  Up: 20 (52.6%)
+  Down: 18 (47.4%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 20
+  Correct: 13
+  Accuracy: 65.0%
+
+Binomial Test (Is market better than random?):
+  Market is not significantly different from random (65.0% accuracy, p=0.2632)
+  ✗ Not significant (p = 0.2632)
+
+CONCLUSION:
+  Insufficient data for conclusions. Keep collecting.
+======================================================================

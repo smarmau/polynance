@@ -1,0 +1,19 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: SOL
+======================================================================
+
+⚠️  WARNING: Only 14 windows collected
+   Need at least 100 windows for reliable statistical analysis
+   Current results are DESCRIPTIVE ONLY, not statistically valid
+
+Sample Size: 14 windows
+  Up: 4 (28.6%)
+  Down: 10 (71.4%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 7
+  Correct: 7
+  Accuracy: 100.0%
+
+CONCLUSION:
+  Insufficient data for conclusions. Keep collecting.
+======================================================================

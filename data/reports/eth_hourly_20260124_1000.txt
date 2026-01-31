@@ -1,0 +1,19 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: ETH
+======================================================================
+
+⚠️  WARNING: Only 22 windows collected
+   Need at least 100 windows for reliable statistical analysis
+   Current results are DESCRIPTIVE ONLY, not statistically valid
+
+Sample Size: 22 windows
+  Up: 12 (54.5%)
+  Down: 10 (45.5%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 9
+  Correct: 6
+  Accuracy: 66.7%
+
+CONCLUSION:
+  Insufficient data for conclusions. Keep collecting.
+======================================================================

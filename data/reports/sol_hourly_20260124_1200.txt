@@ -1,0 +1,23 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: SOL
+======================================================================
+
+⚠️  WARNING: Only 30 windows collected
+   Need at least 100 windows for reliable statistical analysis
+   Current results are DESCRIPTIVE ONLY, not statistically valid
+
+Sample Size: 30 windows
+  Up: 11 (36.7%)
+  Down: 19 (63.3%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 15
+  Correct: 13
+  Accuracy: 86.7%
+
+Binomial Test (Is market better than random?):
+  Market is significantly predictive (86.7% accuracy, p=0.0074)
+  ✓ SIGNIFICANT at p < 0.05
+
+CONCLUSION:
+  Insufficient data for conclusions. Keep collecting.
+======================================================================

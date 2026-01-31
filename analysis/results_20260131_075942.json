@@ -1,0 +1,637 @@
+{
+  "run_timestamp": "2026-01-31T07:59:39.065819",
+  "data": {
+    "total_windows": 2358,
+    "date_range": [
+      "2026-01-24 01:45:00+00:00",
+      "2026-01-30 20:30:00+00:00"
+    ],
+    "up_count": 1137,
+    "down_count": 1221
+  },
+  "strategies": {
+    "t5_0.60_0.40": {
+      "config": {
+        "price_col": "pm_yes_t5",
+        "bull_thresh": 0.6,
+        "bear_thresh": 0.4
+      },
+      "n_trades": 1527,
+      "wins": 1180,
+      "win_rate": 0.7727570399476097,
+      "backtest_flat": {
+        "n_trades": 1527,
+        "wins": 1180,
+        "win_rate": 0.7727570399476097,
+        "total_pnl": 1236.0149999999996,
+        "max_drawdown": -406.53499999999997,
+        "max_drawdown_pct": -33.20821761150138,
+        "sharpe": 12.331416504394227,
+        "avg_pnl": 0.8094400785854634,
+        "std_pnl": 10.2095740744956
+      },
+      "backtest_am": {
+        "n_trades": 1527,
+        "total_pnl": 4686.734059220321,
+        "final_bankroll": 5686.734059220323,
+        "max_drawdown": -434.1749999999995,
+        "max_drawdown_pct": -25.564594427790112,
+        "sharpe": 29.204936961100483,
+        "avg_bet": 41.45734813367811
+      },
+      "tests": {
+        "binomial": {
+          "p_value": 0.0,
+          "significant_at_0.05": true,
+          "significant_bonferroni": true
+        },
+        "bootstrap_ci": {
+          "lower": 0.7518009168303864,
+          "upper": 0.793713163064833,
+          "mean": 0.7727570399476097,
+          "lower_above_50": true
+        },
+        "train_test": {
+          "train_win_rate": 0.7688022284122563,
+          "test_win_rate": 0.7822222222222223,
+          "difference": 0.013419993809965947,
+          "test_degrades": false
+        },
+        "permutation": {
+          "actual_win_rate": 0.7727570399476097,
+          "shuffled_mean": 0.4995271774721676,
+          "shuffled_std": 0.013458401092462201,
+          "z_score": 20.30180707190195,
+          "p_value": 0.0,
+          "significant": true
+        },
+        "kfold": {
+          "fold_win_rates": [
+            0.7375886524822695,
+            0.7225806451612903,
+            0.8395061728395061,
+            0.765079365079365,
+            0.793918918918919
+          ],
+          "mean": 0.7717347508962699,
+          "std": 0.041740817555340974,
+          "high_variance": false
+        },
+        "runs": {
+          "observed_runs": 383,
+          "expected_runs": 537.2933857236411,
+          "z_stat": -11.249349683840887,
+          "p_value": 0.0,
+          "clustering_detected": true
+        },
+        "per_asset": {
+          "BTC": {
+            "n": 365,
+            "wins": 276,
+            "win_rate": 0.7561643835616438,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "ETH": {
+            "n": 388,
+            "wins": 298,
+            "win_rate": 0.7680412371134021,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "SOL": {
+            "n": 388,
+            "wins": 300,
+            "win_rate": 0.7731958762886598,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "XRP": {
+            "n": 386,
+            "wins": 306,
+            "win_rate": 0.7927461139896373,
+            "p_value": 0.0,
+            "significant": true
+          }
+        },
+        "ev_ttest": {
+          "mean_pnl": 0.8094400785854614,
+          "std_pnl": 10.206230509947288,
+          "t_stat": 3.098108321790077,
+          "p_value_onesided": 0.0009915664358204816,
+          "significant": true
+        }
+      }
+    },
+    "t7.5_0.60_0.40": {
+      "config": {
+        "price_col": "pm_yes_t7_5",
+        "bull_thresh": 0.6,
+        "bear_thresh": 0.4
+      },
+      "n_trades": 1837,
+      "wins": 1511,
+      "win_rate": 0.8225367446924333,
+      "backtest_flat": {
+        "n_trades": 1837,
+        "wins": 1511,
+        "win_rate": 0.8225367446924333,
+        "total_pnl": 1293.2705,
+        "max_drawdown": -282.33749999999986,
+        "max_drawdown_pct": -18.715692754884618,
+        "sharpe": 11.969959955631445,
+        "avg_pnl": 0.7040122482308109,
+        "std_pnl": 9.147942040639213
+      },
+      "backtest_am": {
+        "n_trades": 1837,
+        "total_pnl": 4541.801848907305,
+        "final_bankroll": 5541.801848907296,
+        "max_drawdown": -262.30125000000044,
+        "max_drawdown_pct": -13.378611242293678,
+        "sharpe": 25.637961654335985,
+        "avg_bet": 43.31267992151623
+      },
+      "tests": {
+        "binomial": {
+          "p_value": 0.0,
+          "significant_at_0.05": true,
+          "significant_bonferroni": true
+        },
+        "bootstrap_ci": {
+          "lower": 0.8051170386499727,
+          "upper": 0.839412084921067,
+          "mean": 0.8225367446924333,
+          "lower_above_50": true
+        },
+        "train_test": {
+          "train_win_rate": 0.8161189358372457,
+          "test_win_rate": 0.8372093023255814,
+          "difference": 0.021090366488335732,
+          "test_degrades": false
+        },
+        "permutation": {
+          "actual_win_rate": 0.8225367446924333,
+          "shuffled_mean": 0.49987915078933043,
+          "shuffled_std": 0.011907393604481729,
+          "z_score": 27.09724769505061,
+          "p_value": 0.0,
+          "significant": true
+        },
+        "kfold": {
+          "fold_win_rates": [
+            0.801829268292683,
+            0.824468085106383,
+            0.839572192513369,
+            0.8121693121693122,
+            0.8320209973753281
+          ],
+          "mean": 0.8220119710914151,
+          "std": 0.013555765611085442,
+          "high_variance": false
+        },
+        "runs": {
+          "observed_runs": 397,
+          "expected_runs": 537.2939575394665,
+          "z_stat": -11.219607972954412,
+          "p_value": 0.0,
+          "clustering_detected": true
+        },
+        "per_asset": {
+          "BTC": {
+            "n": 458,
+            "wins": 377,
+            "win_rate": 0.8231441048034934,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "ETH": {
+            "n": 460,
+            "wins": 368,
+            "win_rate": 0.8,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "SOL": {
+            "n": 456,
+            "wins": 385,
+            "win_rate": 0.8442982456140351,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "XRP": {
+            "n": 463,
+            "wins": 381,
+            "win_rate": 0.8228941684665226,
+            "p_value": 0.0,
+            "significant": true
+          }
+        },
+        "ev_ttest": {
+          "mean_pnl": 0.7040122482308111,
+          "std_pnl": 9.145451788234094,
+          "t_stat": 3.298461267944867,
+          "p_value_onesided": 0.0004953718913468553,
+          "significant": true
+        }
+      }
+    },
+    "t7.5_0.75_0.25": {
+      "config": {
+        "price_col": "pm_yes_t7_5",
+        "bull_thresh": 0.75,
+        "bear_thresh": 0.25
+      },
+      "n_trades": 1068,
+      "wins": 968,
+      "win_rate": 0.9063670411985019,
+      "backtest_flat": {
+        "n_trades": 1068,
+        "wins": 968,
+        "win_rate": 0.9063670411985019,
+        "total_pnl": 912.458,
+        "max_drawdown": -160.96749999999975,
+        "max_drawdown_pct": -11.241839396731857,
+        "sharpe": 18.550428551974697,
+        "avg_pnl": 0.8543614232209742,
+        "std_pnl": 7.163472043058662
+      },
+      "backtest_am": {
+        "n_trades": 1068,
+        "total_pnl": 2422.552915897203,
+        "final_bankroll": 3422.552915897199,
+        "max_drawdown": -157.26499999999987,
+        "max_drawdown_pct": -10.350475894242175,
+        "sharpe": 28.5297064522915,
+        "avg_bet": 46.448721150573995
+      },
+      "tests": {
+        "binomial": {
+          "p_value": 0.0,
+          "significant_at_0.05": true,
+          "significant_bonferroni": true
+        },
+        "bootstrap_ci": {
+          "lower": 0.8885767790262172,
+          "upper": 0.9232209737827716,
+          "mean": 0.9063670411985019,
+          "lower_above_50": true
+        },
+        "train_test": {
+          "train_win_rate": 0.9044414535666218,
+          "test_win_rate": 0.9107692307692308,
+          "difference": 0.0063277772026090195,
+          "test_degrades": false
+        },
+        "permutation": {
+          "actual_win_rate": 0.9063670411985019,
+          "shuffled_mean": 0.4995299625468165,
+          "shuffled_std": 0.01463600245482331,
+          "z_score": 27.797008090662885,
+          "p_value": 0.0,
+          "significant": true
+        },
+        "kfold": {
+          "fold_win_rates": [
+            0.907103825136612,
+            0.9116279069767442,
+            0.9383259911894273,
+            0.8590909090909091,
+            0.9147982062780269
+          ],
+          "mean": 0.906189367734344,
+          "std": 0.02590580404536421,
+          "high_variance": false
+        },
+        "runs": {
+          "observed_runs": 141,
+          "expected_runs": 182.2734082397004,
+          "z_stat": -7.457953271885424,
+          "p_value": 8.79296635503124e-14,
+          "clustering_detected": true
+        },
+        "per_asset": {
+          "BTC": {
+            "n": 263,
+            "wins": 236,
+            "win_rate": 0.8973384030418251,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "ETH": {
+            "n": 272,
+            "wins": 245,
+            "win_rate": 0.9007352941176471,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "SOL": {
+            "n": 259,
+            "wins": 238,
+            "win_rate": 0.918918918918919,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "XRP": {
+            "n": 274,
+            "wins": 249,
+            "win_rate": 0.9087591240875912,
+            "p_value": 0.0,
+            "significant": true
+          }
+        },
+        "ev_ttest": {
+          "mean_pnl": 0.8543614232209737,
+          "std_pnl": 7.160117572238771,
+          "t_stat": 3.8976576166821455,
+          "p_value_onesided": 5.159176292029816e-05,
+          "significant": true
+        }
+      }
+    },
+    "t7.5_0.80_0.20": {
+      "config": {
+        "price_col": "pm_yes_t7_5",
+        "bull_thresh": 0.8,
+        "bear_thresh": 0.2
+      },
+      "n_trades": 812,
+      "wins": 757,
+      "win_rate": 0.9322660098522167,
+      "backtest_flat": {
+        "n_trades": 812,
+        "wins": 757,
+        "win_rate": 0.9322660098522167,
+        "total_pnl": 669.933,
+        "max_drawdown": -104.57500000000005,
+        "max_drawdown_pct": -7.613179600438502,
+        "sharpe": 20.456581048782088,
+        "avg_pnl": 0.8250406403940901,
+        "std_pnl": 6.273041748227969
+      },
+      "backtest_am": {
+        "n_trades": 812,
+        "total_pnl": 1510.4577290440773,
+        "final_bankroll": 2510.457729044071,
+        "max_drawdown": -158.97874999999976,
+        "max_drawdown_pct": -9.649114965670194,
+        "sharpe": 25.37717352897632,
+        "avg_bet": 47.3875868374438
+      },
+      "tests": {
+        "binomial": {
+          "p_value": 0.0,
+          "significant_at_0.05": true,
+          "significant_bonferroni": true
+        },
+        "bootstrap_ci": {
+          "lower": 0.9150246305418719,
+          "upper": 0.9495073891625616,
+          "mean": 0.9322660098522167,
+          "lower_above_50": true
+        },
+        "train_test": {
+          "train_win_rate": 0.9326047358834244,
+          "test_win_rate": 0.9315589353612167,
+          "difference": -0.0010458005222077071,
+          "test_degrades": false
+        },
+        "permutation": {
+          "actual_win_rate": 0.9322660098522167,
+          "shuffled_mean": 0.5004507389162561,
+          "shuffled_std": 0.017761423601763467,
+          "z_score": 24.31197411974833,
+          "p_value": 0.0,
+          "significant": true
+        },
+        "kfold": {
+          "fold_win_rates": [
+            0.924812030075188,
+            0.93125,
+            0.9588235294117647,
+            0.9151515151515152,
+            0.9293478260869565
+          ],
+          "mean": 0.9318769801450848,
+          "std": 0.014577797779328296,
+          "high_variance": false
+        },
+        "runs": {
+          "observed_runs": 89,
+          "expected_runs": 103.54926108374384,
+          "z_stat": -4.060193324770352,
+          "p_value": 4.903210070694719e-05,
+          "clustering_detected": true
+        },
+        "per_asset": {
+          "BTC": {
+            "n": 190,
+            "wins": 173,
+            "win_rate": 0.9105263157894737,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "ETH": {
+            "n": 211,
+            "wins": 197,
+            "win_rate": 0.933649289099526,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "SOL": {
+            "n": 201,
+            "wins": 188,
+            "win_rate": 0.9353233830845771,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "XRP": {
+            "n": 210,
+            "wins": 199,
+            "win_rate": 0.9476190476190476,
+            "p_value": 0.0,
+            "significant": true
+          }
+        },
+        "ev_ttest": {
+          "mean_pnl": 0.8250406403940886,
+          "std_pnl": 6.269177847800857,
+          "t_stat": 3.7477894005871155,
+          "p_value_onesided": 9.552575531824376e-05,
+          "significant": true
+        }
+      }
+    },
+    "t10_0.60_0.40": {
+      "config": {
+        "price_col": "pm_yes_t10",
+        "bull_thresh": 0.6,
+        "bear_thresh": 0.4
+      },
+      "n_trades": 2022,
+      "wins": 1732,
+      "win_rate": 0.8565776458951533,
+      "backtest_flat": {
+        "n_trades": 2022,
+        "wins": 1732,
+        "win_rate": 0.8565776458951533,
+        "total_pnl": 566.4322500000001,
+        "max_drawdown": -418.3852499999998,
+        "max_drawdown_pct": -39.53828634609976,
+        "sharpe": 5.249824942354402,
+        "avg_pnl": 0.2801346439169147,
+        "std_pnl": 8.299613832314114
+      },
+      "backtest_am": {
+        "n_trades": 2022,
+        "total_pnl": 3213.0114820043495,
+        "final_bankroll": 4213.011482004326,
+        "max_drawdown": -316.6612500000001,
+        "max_drawdown_pct": -17.72303491860196,
+        "sharpe": 18.10997366263993,
+        "avg_bet": 44.584465091893435
+      },
+      "tests": {
+        "binomial": {
+          "p_value": 0.0,
+          "significant_at_0.05": true,
+          "significant_bonferroni": true
+        },
+        "bootstrap_ci": {
+          "lower": 0.841246290801187,
+          "upper": 0.8714144411473789,
+          "mean": 0.8565776458951533,
+          "lower_above_50": true
+        },
+        "train_test": {
+          "train_win_rate": 0.8520625889046942,
+          "test_win_rate": 0.8668831168831169,
+          "difference": 0.014820527978422704,
+          "test_degrades": false
+        },
+        "permutation": {
+          "actual_win_rate": 0.8565776458951533,
+          "shuffled_mean": 0.5009109792284867,
+          "shuffled_std": 0.011199078417220933,
+          "z_score": 31.75856560837671,
+          "p_value": 0.0,
+          "significant": true
+        },
+        "kfold": {
+          "fold_win_rates": [
+            0.8191214470284238,
+            0.8446601941747572,
+            0.9034653465346535,
+            0.8480392156862745,
+            0.8661800486618005
+          ],
+          "mean": 0.8562932504171819,
+          "std": 0.027957666160453025,
+          "high_variance": false
+        },
+        "runs": {
+          "observed_runs": 355,
+          "expected_runs": 497.8150346191889,
+          "z_stat": -12.935996082292556,
+          "p_value": 0.0,
+          "clustering_detected": true
+        },
+        "per_asset": {
+          "BTC": {
+            "n": 514,
+            "wins": 444,
+            "win_rate": 0.8638132295719845,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "ETH": {
+            "n": 511,
+            "wins": 439,
+            "win_rate": 0.8590998043052838,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "SOL": {
+            "n": 494,
+            "wins": 425,
+            "win_rate": 0.8603238866396761,
+            "p_value": 0.0,
+            "significant": true
+          },
+          "XRP": {
+            "n": 503,
+            "wins": 424,
+            "win_rate": 0.8429423459244533,
+            "p_value": 0.0,
+            "significant": true
+          }
+        },
+        "ev_ttest": {
+          "mean_pnl": 0.280134643916914,
+          "std_pnl": 8.297561250649897,
+          "t_stat": 1.5177474456384938,
+          "p_value_onesided": 0.064617240338522,
+          "significant": false
+        }
+      }
+    }
+  },
+  "calibration": [
+    {
+      "bin": "0.0-0.2",
+      "n": 384,
+      "predicted": 0.1,
+      "actual": 0.057291666666666664,
+      "error": -0.04270833333333334
+    },
+    {
+      "bin": "0.2-0.3",
+      "n": 260,
+      "predicted": 0.25,
+      "actual": 0.18461538461538463,
+      "error": -0.06538461538461537
+    },
+    {
+      "bin": "0.3-0.4",
+      "n": 256,
+      "predicted": 0.35,
+      "actual": 0.27734375,
+      "error": -0.07265624999999998
+    },
+    {
+      "bin": "0.4-0.5",
+      "n": 252,
+      "predicted": 0.45,
+      "actual": 0.47619047619047616,
+      "error": 0.026190476190476153
+    },
+    {
+      "bin": "0.5-0.6",
+      "n": 245,
+      "predicted": 0.55,
+      "actual": 0.47346938775510206,
+      "error": -0.07653061224489799
+    },
+    {
+      "bin": "0.6-0.7",
+      "n": 257,
+      "predicted": 0.6499999999999999,
+      "actual": 0.6964980544747081,
+      "error": 0.04649805447470823
+    },
+    {
+      "bin": "0.7-0.8",
+      "n": 252,
+      "predicted": 0.75,
+      "actual": 0.7063492063492064,
+      "error": -0.04365079365079361
+    },
+    {
+      "bin": "0.8-1.0",
+      "n": 428,
+      "predicted": 0.9,
+      "actual": 0.9228971962616822,
+      "error": 0.022897196261682184
+    }
+  ]
+}

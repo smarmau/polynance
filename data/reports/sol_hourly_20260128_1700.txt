@@ -1,0 +1,26 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: SOL
+======================================================================
+
+Sample Size: 384 windows
+  Up: 177 (46.1%)
+  Down: 207 (53.9%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 251
+  Correct: 192
+  Accuracy: 76.5%
+
+Binomial Test (Is market better than random?):
+  Market is significantly predictive (76.5% accuracy, p=0.0000)
+  ✓ SIGNIFICANT at p < 0.05
+
+ROC AUC Score: 0.777
+  (0.5 = random, 1.0 = perfect)
+  Optimal Threshold: 0.490
+
+Best Prediction Timepoint: t10
+
+CONCLUSION:
+  ✓ Market shows statistically significant predictive power
+  Accuracy: 76.5% (p < 0.05)
+======================================================================

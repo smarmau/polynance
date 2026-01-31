@@ -1,0 +1,26 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: BTC
+======================================================================
+
+Sample Size: 267 windows
+  Up: 129 (48.3%)
+  Down: 138 (51.7%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 154
+  Correct: 110
+  Accuracy: 71.4%
+
+Binomial Test (Is market better than random?):
+  Market is significantly predictive (71.4% accuracy, p=0.0000)
+  ✓ SIGNIFICANT at p < 0.05
+
+ROC AUC Score: 0.708
+  (0.5 = random, 1.0 = perfect)
+  Optimal Threshold: 0.430
+
+Best Prediction Timepoint: t10
+
+CONCLUSION:
+  ✓ Market shows statistically significant predictive power
+  Accuracy: 71.4% (p < 0.05)
+======================================================================

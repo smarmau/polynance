@@ -1,0 +1,26 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: ETH
+======================================================================
+
+Sample Size: 546 windows
+  Up: 273 (50.0%)
+  Down: 273 (50.0%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 360
+  Correct: 276
+  Accuracy: 76.7%
+
+Binomial Test (Is market better than random?):
+  Market is significantly predictive (76.7% accuracy, p=0.0000)
+  ✓ SIGNIFICANT at p < 0.05
+
+ROC AUC Score: 0.763
+  (0.5 = random, 1.0 = perfect)
+  Optimal Threshold: 0.525
+
+Best Prediction Timepoint: t10
+
+CONCLUSION:
+  ✓ Market shows statistically significant predictive power
+  Accuracy: 76.7% (p < 0.05)
+======================================================================

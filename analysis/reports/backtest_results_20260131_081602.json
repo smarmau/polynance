@@ -1,0 +1,306 @@
+{
+  "timestamp": "20260131_081602",
+  "data_info": {
+    "total_windows": 2366,
+    "date_range": [
+      "2026-01-24 01:45:00+00:00",
+      "2026-01-30 21:00:00+00:00"
+    ],
+    "up_count": 1140,
+    "down_count": 1226,
+    "up_pct": 48.18258664412511,
+    "down_pct": 51.8174133558749
+  },
+  "strategies": {
+    "t5_0.60_0.40": {
+      "flat": {
+        "n_trades": 1536,
+        "win_rate": 0.7721354166666666,
+        "total_pnl": 1249.285499999999,
+        "max_drawdown_pct": -32.0454710409379,
+        "sharpe_ratio": 12.382195767903596,
+        "sortino_ratio": 19.687685960587398,
+        "calmar_ratio": 3.8984775677162884,
+        "profit_factor": 1.203243258632615,
+        "expectancy": 0.8133369140624973,
+        "avg_win": 6.236117622259696,
+        "avg_loss": -17.562142857142863,
+        "max_consecutive_wins": 46,
+        "max_consecutive_losses": 7,
+        "per_asset": {
+          "BTC": {
+            "n_trades": 366,
+            "wins": 277,
+            "win_rate": 0.7568306010928961,
+            "total_pnl": 190.1159999999996,
+            "avg_pnl": 0.5194426229508186
+          },
+          "ETH": {
+            "n_trades": 391,
+            "wins": 299,
+            "win_rate": 0.7647058823529411,
+            "total_pnl": 241.85949999999954,
+            "avg_pnl": 0.6185664961636816
+          },
+          "SOL": {
+            "n_trades": 392,
+            "wins": 304,
+            "win_rate": 0.7755102040816326,
+            "total_pnl": 382.23200000000026,
+            "avg_pnl": 0.9750816326530619
+          },
+          "XRP": {
+            "n_trades": 387,
+            "wins": 306,
+            "win_rate": 0.7906976744186046,
+            "total_pnl": 435.07800000000043,
+            "avg_pnl": 1.124232558139536
+          }
+        }
+      },
+      "am": {
+        "n_trades": 1536,
+        "win_rate": 0.7721354166666666,
+        "total_pnl": 42012.30321284037,
+        "max_drawdown_pct": -42.66734690353691,
+        "sharpe_ratio": 18.908786012596103,
+        "sortino_ratio": 31.715880860993142,
+        "calmar_ratio": 98.46476582624771,
+        "profit_factor": 1.5652000118827765,
+        "expectancy": 27.351759904192953
+      }
+    },
+    "t7.5_0.60_0.40": {
+      "flat": {
+        "n_trades": 1851,
+        "win_rate": 0.8206374932468936,
+        "total_pnl": 1255.4575000000034,
+        "max_drawdown_pct": -20.745012244790896,
+        "sharpe_ratio": 11.503625536954884,
+        "sortino_ratio": 21.69372885199538,
+        "calmar_ratio": 6.051852296762157,
+        "profit_factor": 1.2085243764195923,
+        "expectancy": 0.6782590491626155,
+        "avg_win": 4.79008064516129,
+        "avg_loss": -18.13456325301205,
+        "max_consecutive_wins": 52,
+        "max_consecutive_losses": 10,
+        "per_asset": {
+          "BTC": {
+            "n_trades": 460,
+            "wins": 379,
+            "win_rate": 0.8239130434782609,
+            "total_pnl": 426.8267499999999,
+            "avg_pnl": 0.9278842391304345
+          },
+          "ETH": {
+            "n_trades": 462,
+            "wins": 370,
+            "win_rate": 0.8008658008658008,
+            "total_pnl": 62.993249999999755,
+            "avg_pnl": 0.13634902597402546
+          },
+          "SOL": {
+            "n_trades": 461,
+            "wins": 387,
+            "win_rate": 0.8394793926247288,
+            "total_pnl": 535.6210000000008,
+            "avg_pnl": 1.161867678958787
+          },
+          "XRP": {
+            "n_trades": 468,
+            "wins": 383,
+            "win_rate": 0.8183760683760684,
+            "total_pnl": 230.01649999999935,
+            "avg_pnl": 0.49148824786324646
+          }
+        }
+      },
+      "am": {
+        "n_trades": 1851,
+        "win_rate": 0.8206374932468936,
+        "total_pnl": 39470.161356557146,
+        "max_drawdown_pct": -29.37926380492573,
+        "sharpe_ratio": 14.908496380363232,
+        "sortino_ratio": 26.113257113966124,
+        "calmar_ratio": 134.34700616949965,
+        "profit_factor": 1.4373872629768318,
+        "expectancy": 21.323696032715922
+      }
+    },
+    "t7.5_0.75_0.25": {
+      "flat": {
+        "n_trades": 1077,
+        "win_rate": 0.9052924791086351,
+        "total_pnl": 909.9205000000027,
+        "max_drawdown_pct": -11.06782951232161,
+        "sharpe_ratio": 18.270365388215854,
+        "sortino_ratio": 30.58897845739634,
+        "calmar_ratio": 8.221309327063588,
+        "profit_factor": 1.4287678914321371,
+        "expectancy": 0.8448658310120694,
+        "avg_win": 3.109841538461538,
+        "avg_loss": -20.805637254901967,
+        "max_consecutive_wins": 70,
+        "max_consecutive_losses": 5,
+        "per_asset": {
+          "BTC": {
+            "n_trades": 263,
+            "wins": 236,
+            "win_rate": 0.8973384030418251,
+            "total_pnl": 234.44274999999962,
+            "avg_pnl": 0.8914173003802267
+          },
+          "ETH": {
+            "n_trades": 273,
+            "wins": 246,
+            "win_rate": 0.9010989010989011,
+            "total_pnl": 198.34124999999995,
+            "avg_pnl": 0.7265247252747251
+          },
+          "SOL": {
+            "n_trades": 264,
+            "wins": 242,
+            "win_rate": 0.9166666666666666,
+            "total_pnl": 282.8709999999999,
+            "avg_pnl": 1.0714810606060603
+          },
+          "XRP": {
+            "n_trades": 277,
+            "wins": 251,
+            "win_rate": 0.9061371841155235,
+            "total_pnl": 194.26549999999972,
+            "avg_pnl": 0.7013194945848366
+          }
+        }
+      },
+      "am": {
+        "n_trades": 1077,
+        "win_rate": 0.9052924791086351,
+        "total_pnl": 6971.421984178091,
+        "max_drawdown_pct": -20.465564955522016,
+        "sharpe_ratio": 17.481822108088842,
+        "sortino_ratio": 27.26226555477926,
+        "calmar_ratio": 34.06415605593666,
+        "profit_factor": 1.4878714360410583,
+        "expectancy": 6.47300091381438
+      }
+    },
+    "t7.5_0.80_0.20": {
+      "flat": {
+        "n_trades": 815,
+        "win_rate": 0.9312883435582822,
+        "total_pnl": 655.3225000000016,
+        "max_drawdown_pct": -7.551105797693239,
+        "sharpe_ratio": 19.849145137227424,
+        "sortino_ratio": 33.061426677113054,
+        "calmar_ratio": 8.678497130846504,
+        "profit_factor": 1.5343464611872135,
+        "expectancy": 0.8040766871165625,
+        "avg_win": 2.479212779973649,
+        "avg_loss": -21.900000000000002,
+        "max_consecutive_wins": 113,
+        "max_consecutive_losses": 3,
+        "per_asset": {
+          "BTC": {
+            "n_trades": 190,
+            "wins": 173,
+            "win_rate": 0.9105263157894737,
+            "total_pnl": 100.21624999999997,
+            "avg_pnl": 0.5274539473684209
+          },
+          "ETH": {
+            "n_trades": 212,
+            "wins": 198,
+            "win_rate": 0.9339622641509434,
+            "total_pnl": 193.87475000000006,
+            "avg_pnl": 0.9145035377358494
+          },
+          "SOL": {
+            "n_trades": 202,
+            "wins": 189,
+            "win_rate": 0.9356435643564357,
+            "total_pnl": 172.9945,
+            "avg_pnl": 0.8564084158415841
+          },
+          "XRP": {
+            "n_trades": 211,
+            "wins": 199,
+            "win_rate": 0.943127962085308,
+            "total_pnl": 188.2369999999999,
+            "avg_pnl": 0.8921184834123218
+          }
+        }
+      },
+      "am": {
+        "n_trades": 815,
+        "win_rate": 0.9312883435582822,
+        "total_pnl": 3014.6621793981203,
+        "max_drawdown_pct": -16.467723133985565,
+        "sharpe_ratio": 20.094704847769584,
+        "sortino_ratio": 26.85365681787989,
+        "calmar_ratio": 18.30649055045478,
+        "profit_factor": 1.6054127306843629,
+        "expectancy": 3.6989719992614916
+      }
+    },
+    "t10_0.60_0.40": {
+      "flat": {
+        "n_trades": 2029,
+        "win_rate": 0.8565795958600295,
+        "total_pnl": 592.7087500000046,
+        "max_drawdown_pct": -37.87746539045834,
+        "sharpe_ratio": 5.473791745005822,
+        "sortino_ratio": 7.531574164797753,
+        "calmar_ratio": 1.5648057331452176,
+        "profit_factor": 1.1076331320651935,
+        "expectancy": 0.2921186545096086,
+        "avg_win": 3.5094699367088604,
+        "avg_loss": -18.92353951890035,
+        "max_consecutive_wins": 59,
+        "max_consecutive_losses": 7,
+        "per_asset": {
+          "BTC": {
+            "n_trades": 515,
+            "wins": 444,
+            "win_rate": 0.8621359223300971,
+            "total_pnl": 302.5525000000006,
+            "avg_pnl": 0.5874805825242729
+          },
+          "ETH": {
+            "n_trades": 513,
+            "wins": 441,
+            "win_rate": 0.8596491228070176,
+            "total_pnl": 169.5514999999995,
+            "avg_pnl": 0.330509746588693
+          },
+          "SOL": {
+            "n_trades": 497,
+            "wins": 428,
+            "win_rate": 0.8611670020120724,
+            "total_pnl": 178.9662499999994,
+            "avg_pnl": 0.3600930583500994
+          },
+          "XRP": {
+            "n_trades": 504,
+            "wins": 425,
+            "win_rate": 0.8432539682539683,
+            "total_pnl": -58.361500000000234,
+            "avg_pnl": -0.11579662698412745
+          }
+        }
+      },
+      "am": {
+        "n_trades": 2029,
+        "win_rate": 0.8565795958600295,
+        "total_pnl": 15634.031465308568,
+        "max_drawdown_pct": -31.63999776898652,
+        "sharpe_ratio": 12.63501678563009,
+        "sortino_ratio": 16.406510269611687,
+        "calmar_ratio": 49.41223946808561,
+        "profit_factor": 1.3693370359229458,
+        "expectancy": 7.705289041551783
+      }
+    }
+  }
+}

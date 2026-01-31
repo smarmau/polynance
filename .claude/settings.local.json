@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(timeout 60 python:*)",
+      "Bash(PYTHONPATH=src gtimeout 60 python:*)",
+      "Bash(sqlite3:*)",
+      "Bash(ls:*)",
+      "Bash(for db in data/btc.db data/eth.db data/sol.db data/xrp.db)",
+      "Bash(do echo \"=== $db ===\")",
+      "Bash(done)",
+      "Bash(chmod:*)",
+      "Bash(python:*)",
+      "Bash(find:*)",
+      "Bash(for db in /Volumes/shared_folder/polynance/data/*.db)",
+      "Bash(python3:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(PYTHONPATH=src python3:*)",
+      "Bash(source:*)",
+      "Bash(PYTHONPATH=/Volumes/shared_folder/polynance/src python3:*)",
+      "Bash(PYTHONPATH=src python:*)",
+      "WebFetch(domain:www.polymarketexchange.com)",
+      "Bash(pip show:*)"
+    ]
+  }
+}

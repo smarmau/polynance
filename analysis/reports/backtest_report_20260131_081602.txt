@@ -1,0 +1,304 @@
+================================================================================
+POLYNANCE BACKTEST SUITE - COMPREHENSIVE REPORT
+================================================================================
+Generated: 2026-01-31 08:16:25
+
+DATA OVERVIEW
+----------------------------------------
+Total Windows: 2,366
+Date Range: 2026-01-24 01:45:00+00:00 to 2026-01-30 21:00:00+00:00
+Assets: BTC, ETH, SOL, XRP
+Outcome Balance: UP 48.2% / DOWN 51.8%
+
+BACKTEST SETTINGS
+----------------------------------------
+Initial Bankroll: $1,000.00
+Base Bet Size: $25.00
+Fee Rate: 2.0%
+Spread Cost: 0.60%
+Anti-Martingale: 2x on win, 0.5x on loss, 5% max
+
+================================================================================
+STRATEGY COMPARISON
+================================================================================
+
+STRATEGY: t5_0.60_0.40
+------------------------------------------------------------
+
+  BASIC METRICS
+    Trades: 1,536
+    Wins: 1,186 (77.21%)
+    Losses: 350 (22.79%)
+
+  PNL METRICS (Flat $25 Betting)
+    Total PnL: $1,249.29
+    Total Return: 124.93%
+    Avg PnL/Trade: $0.81
+    Median PnL: $5.37
+    Std Dev: $10.22
+
+  PNL METRICS (Anti-Martingale)
+    Total PnL: $42,012.30
+    Total Return: 4201.23%
+    Avg PnL/Trade: $27.35
+
+  RISK METRICS
+    Max Drawdown (Flat): $-392.95 (-32.05%)
+    Max Drawdown (AM): $-5739.58 (-42.67%)
+    Avg Drawdown: -7.78%
+    Max Consecutive Wins: 46
+    Max Consecutive Losses: 7
+
+  RISK-ADJUSTED RETURNS
+    Sharpe Ratio (Flat): 12.38
+    Sharpe Ratio (AM): 18.91
+    Sortino Ratio (AM): 31.72
+    Calmar Ratio (AM): 98.46
+
+  TRADE ANALYSIS
+    Profit Factor: 1.20
+    Avg Win: $6.24
+    Avg Loss: $-17.56
+    Win/Loss Ratio: 0.36
+    Expectancy: $0.81
+
+  TIME-BASED ANALYSIS
+    Trades/Day: 219.4
+    Best Day: $777.04
+    Worst Day: $-136.15
+    Profitable Days: 71.4%
+
+  PER-ASSET BREAKDOWN
+    BTC: 366 trades, 75.7% win, $190.12 PnL
+    ETH: 391 trades, 76.5% win, $241.86 PnL
+    SOL: 392 trades, 77.6% win, $382.23 PnL
+    XRP: 387 trades, 79.1% win, $435.08 PnL
+
+
+STRATEGY: t7.5_0.60_0.40
+------------------------------------------------------------
+
+  BASIC METRICS
+    Trades: 1,851
+    Wins: 1,519 (82.06%)
+    Losses: 332 (17.94%)
+
+  PNL METRICS (Flat $25 Betting)
+    Total PnL: $1,255.46
+    Total Return: 125.55%
+    Avg PnL/Trade: $0.68
+    Median PnL: $3.65
+    Std Dev: $9.17
+
+  PNL METRICS (Anti-Martingale)
+    Total PnL: $39,470.16
+    Total Return: 3947.02%
+    Avg PnL/Trade: $21.32
+
+  RISK METRICS
+    Max Drawdown (Flat): $-282.96 (-20.75%)
+    Max Drawdown (AM): $-8560.37 (-29.38%)
+    Avg Drawdown: -4.76%
+    Max Consecutive Wins: 52
+    Max Consecutive Losses: 10
+
+  RISK-ADJUSTED RETURNS
+    Sharpe Ratio (Flat): 11.50
+    Sharpe Ratio (AM): 14.91
+    Sortino Ratio (AM): 26.11
+    Calmar Ratio (AM): 134.35
+
+  TRADE ANALYSIS
+    Profit Factor: 1.21
+    Avg Win: $4.79
+    Avg Loss: $-18.13
+    Win/Loss Ratio: 0.26
+    Expectancy: $0.68
+
+  TIME-BASED ANALYSIS
+    Trades/Day: 264.4
+    Best Day: $510.43
+    Worst Day: $-86.23
+    Profitable Days: 85.7%
+
+  PER-ASSET BREAKDOWN
+    BTC: 460 trades, 82.4% win, $426.83 PnL
+    ETH: 462 trades, 80.1% win, $62.99 PnL
+    SOL: 461 trades, 83.9% win, $535.62 PnL
+    XRP: 468 trades, 81.8% win, $230.02 PnL
+
+
+STRATEGY: t7.5_0.75_0.25
+------------------------------------------------------------
+
+  BASIC METRICS
+    Trades: 1,077
+    Wins: 975 (90.53%)
+    Losses: 102 (9.47%)
+
+  PNL METRICS (Flat $25 Betting)
+    Total PnL: $909.92
+    Total Return: 90.99%
+    Avg PnL/Trade: $0.84
+    Median PnL: $2.67
+    Std Dev: $7.19
+
+  PNL METRICS (Anti-Martingale)
+    Total PnL: $6,971.42
+    Total Return: 697.14%
+    Avg PnL/Trade: $6.47
+
+  RISK METRICS
+    Max Drawdown (Flat): $-156.10 (-11.07%)
+    Max Drawdown (AM): $-1194.09 (-20.47%)
+    Avg Drawdown: -2.86%
+    Max Consecutive Wins: 70
+    Max Consecutive Losses: 5
+
+  RISK-ADJUSTED RETURNS
+    Sharpe Ratio (Flat): 18.27
+    Sharpe Ratio (AM): 17.48
+    Sortino Ratio (AM): 27.26
+    Calmar Ratio (AM): 34.06
+
+  TRADE ANALYSIS
+    Profit Factor: 1.43
+    Avg Win: $3.11
+    Avg Loss: $-20.81
+    Win/Loss Ratio: 0.15
+    Expectancy: $0.84
+
+  TIME-BASED ANALYSIS
+    Trades/Day: 153.9
+    Best Day: $441.74
+    Worst Day: $-129.27
+    Profitable Days: 85.7%
+
+  PER-ASSET BREAKDOWN
+    BTC: 263 trades, 89.7% win, $234.44 PnL
+    ETH: 273 trades, 90.1% win, $198.34 PnL
+    SOL: 264 trades, 91.7% win, $282.87 PnL
+    XRP: 277 trades, 90.6% win, $194.27 PnL
+
+
+STRATEGY: t7.5_0.80_0.20
+------------------------------------------------------------
+
+  BASIC METRICS
+    Trades: 815
+    Wins: 759 (93.13%)
+    Losses: 56 (6.87%)
+
+  PNL METRICS (Flat $25 Betting)
+    Total PnL: $655.32
+    Total Return: 65.53%
+    Avg PnL/Trade: $0.80
+    Median PnL: $2.18
+    Std Dev: $6.30
+
+  PNL METRICS (Anti-Martingale)
+    Total PnL: $3,014.66
+    Total Return: 301.47%
+    Avg PnL/Trade: $3.70
+
+  RISK METRICS
+    Max Drawdown (Flat): $-104.74 (-7.55%)
+    Max Drawdown (AM): $-552.08 (-16.47%)
+    Avg Drawdown: -2.13%
+    Max Consecutive Wins: 113
+    Max Consecutive Losses: 3
+
+  RISK-ADJUSTED RETURNS
+    Sharpe Ratio (Flat): 19.85
+    Sharpe Ratio (AM): 20.09
+    Sortino Ratio (AM): 26.85
+    Calmar Ratio (AM): 18.31
+
+  TRADE ANALYSIS
+    Profit Factor: 1.53
+    Avg Win: $2.48
+    Avg Loss: $-21.90
+    Win/Loss Ratio: 0.11
+    Expectancy: $0.80
+
+  TIME-BASED ANALYSIS
+    Trades/Day: 116.4
+    Best Day: $293.52
+    Worst Day: $-1.85
+    Profitable Days: 85.7%
+
+  PER-ASSET BREAKDOWN
+    BTC: 190 trades, 91.1% win, $100.22 PnL
+    ETH: 212 trades, 93.4% win, $193.87 PnL
+    SOL: 202 trades, 93.6% win, $172.99 PnL
+    XRP: 211 trades, 94.3% win, $188.24 PnL
+
+
+STRATEGY: t10_0.60_0.40
+------------------------------------------------------------
+
+  BASIC METRICS
+    Trades: 2,029
+    Wins: 1,738 (85.66%)
+    Losses: 291 (14.34%)
+
+  PNL METRICS (Flat $25 Betting)
+    Total PnL: $592.71
+    Total Return: 59.27%
+    Avg PnL/Trade: $0.29
+    Median PnL: $2.18
+    Std Dev: $8.30
+
+  PNL METRICS (Anti-Martingale)
+    Total PnL: $15,634.03
+    Total Return: 1563.40%
+    Avg PnL/Trade: $7.71
+
+  RISK METRICS
+    Max Drawdown (Flat): $-401.63 (-37.88%)
+    Max Drawdown (AM): $-2805.95 (-31.64%)
+    Avg Drawdown: -10.30%
+    Max Consecutive Wins: 59
+    Max Consecutive Losses: 7
+
+  RISK-ADJUSTED RETURNS
+    Sharpe Ratio (Flat): 5.47
+    Sharpe Ratio (AM): 12.64
+    Sortino Ratio (AM): 16.41
+    Calmar Ratio (AM): 49.41
+
+  TRADE ANALYSIS
+    Profit Factor: 1.11
+    Avg Win: $3.51
+    Avg Loss: $-18.92
+    Win/Loss Ratio: 0.19
+    Expectancy: $0.29
+
+  TIME-BASED ANALYSIS
+    Trades/Day: 289.9
+    Best Day: $549.81
+    Worst Day: $-265.16
+    Profitable Days: 71.4%
+
+  PER-ASSET BREAKDOWN
+    BTC: 515 trades, 86.2% win, $302.55 PnL
+    ETH: 513 trades, 86.0% win, $169.55 PnL
+    SOL: 497 trades, 86.1% win, $178.97 PnL
+    XRP: 504 trades, 84.3% win, $-58.36 PnL
+
+
+================================================================================
+SUMMARY COMPARISON TABLE
+================================================================================
+
+Strategy               Trades     Win%     PnL(F)    PnL(AM)    MaxDD   Sharpe
+------------------------------------------------------------------------------
+t5_0.60_0.40            1,536    77.2% $   1,249 $  42,012   -42.7%     18.9
+t7.5_0.60_0.40          1,851    82.1% $   1,255 $  39,470   -29.4%     14.9
+t7.5_0.75_0.25          1,077    90.5% $     910 $   6,971   -20.5%     17.5
+t7.5_0.80_0.20            815    93.1% $     655 $   3,015   -16.5%     20.1
+t10_0.60_0.40           2,029    85.7% $     593 $  15,634   -31.6%     12.6
+
+================================================================================
+END OF REPORT
+================================================================================

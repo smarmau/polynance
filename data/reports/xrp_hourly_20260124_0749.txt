@@ -1,0 +1,19 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: XRP
+======================================================================
+
+⚠️  WARNING: Only 14 windows collected
+   Need at least 100 windows for reliable statistical analysis
+   Current results are DESCRIPTIVE ONLY, not statistically valid
+
+Sample Size: 14 windows
+  Up: 3 (21.4%)
+  Down: 11 (78.6%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 8
+  Correct: 8
+  Accuracy: 100.0%
+
+CONCLUSION:
+  Insufficient data for conclusions. Keep collecting.
+======================================================================

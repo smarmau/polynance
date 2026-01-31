@@ -1,0 +1,27 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: BTC
+======================================================================
+
+⚠️  WARNING: Only 75 windows collected
+   Need at least 100 windows for reliable statistical analysis
+   Current results are DESCRIPTIVE ONLY, not statistically valid
+
+Sample Size: 75 windows
+  Up: 36 (48.0%)
+  Down: 39 (52.0%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 38
+  Correct: 20
+  Accuracy: 52.6%
+
+Binomial Test (Is market better than random?):
+  Market is not significantly different from random (52.6% accuracy, p=0.8714)
+  ✗ Not significant (p = 0.8714)
+
+ROC AUC Score: 0.541
+  (0.5 = random, 1.0 = perfect)
+  Optimal Threshold: 0.435
+
+CONCLUSION:
+  Insufficient data for conclusions. Keep collecting.
+======================================================================

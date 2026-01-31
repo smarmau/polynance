@@ -1,0 +1,19 @@
+======================================================================
+MARKET PREDICTIVENESS ANALYSIS: BTC
+======================================================================
+
+⚠️  WARNING: Only 14 windows collected
+   Need at least 100 windows for reliable statistical analysis
+   Current results are DESCRIPTIVE ONLY, not statistically valid
+
+Sample Size: 14 windows
+  Up: 5 (35.7%)
+  Down: 9 (64.3%)
+
+Strong Predictions (YES > 0.6 or < 0.4): 6
+  Correct: 4
+  Accuracy: 66.7%
+
+CONCLUSION:
+  Insufficient data for conclusions. Keep collecting.
+======================================================================
