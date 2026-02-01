@@ -38,6 +38,7 @@ class SimulatedTrader:
     DEFAULT_SPREAD_COST = 0.006  # 0.6%
     DEFAULT_BULL_THRESHOLD = 0.80
     DEFAULT_BEAR_THRESHOLD = 0.20
+    DEFAULT_MAX_BET_PCT = 0.05  # 5% of bankroll
 
     def __init__(
         self,
@@ -49,6 +50,7 @@ class SimulatedTrader:
         spread_cost: float = DEFAULT_SPREAD_COST,
         bull_threshold: float = DEFAULT_BULL_THRESHOLD,
         bear_threshold: float = DEFAULT_BEAR_THRESHOLD,
+        max_bet_pct: float = DEFAULT_MAX_BET_PCT,
     ):
         """Initialize the simulated trader.
 
@@ -61,6 +63,7 @@ class SimulatedTrader:
             spread_cost: Spread cost on all trades (default: 0.006 = 0.6%)
             bull_threshold: YES price threshold for bull signal (default: 0.80)
             bear_threshold: YES price threshold for bear signal (default: 0.20)
+            max_bet_pct: Maximum bet as % of bankroll (default: 0.05 = 5%)
         """
         self.trading_db = trading_db
         self.asset_databases = asset_databases or {}
@@ -72,9 +75,10 @@ class SimulatedTrader:
         self.spread_cost = spread_cost
         self.bull_threshold = bull_threshold
         self.bear_threshold = bear_threshold
+        self.max_bet_pct = max_bet_pct
 
         # Bet sizing
-        self.sizer = AntiMartingaleSizer(base_bet=base_bet)
+        self.sizer = AntiMartingaleSizer(base_bet=base_bet, max_bet_pct=max_bet_pct)
 
         # State (loaded from DB or initialized)
         self.state: Optional[TradingState] = None
@@ -323,8 +327,9 @@ class SimulatedTrader:
             )
 
         # Update bet size for next trade
+        # Pass the ACTUAL bet used (matches backtest behavior)
         self.state.current_bet_size = self.sizer.calculate_next_bet(
-            self.state.current_bet_size,
+            trade.bet_size,  # Use actual bet from this trade, not target
             self.state.current_bankroll,
             "win" if won else "loss",
         )

@@ -60,6 +60,7 @@ class TradingConfig:
             "spread_cost": self.spread_cost,
             "bull_threshold": self.bull_threshold,
             "bear_threshold": self.bear_threshold,
+            "max_bet_pct": self.max_bet_pct,
         }
 
     def save(self, path: Optional[Path] = None):

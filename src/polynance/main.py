@@ -158,6 +158,7 @@ class Application:
             spread_cost=self.trading_config.get("spread_cost", 0.006),
             bull_threshold=self.trading_config.get("bull_threshold", 0.80),
             bear_threshold=self.trading_config.get("bear_threshold", 0.20),
+            max_bet_pct=self.trading_config.get("max_bet_pct", 0.05),
         )
         await self.trader.initialize()
 
