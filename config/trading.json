@@ -11,7 +11,7 @@
   "win_multiplier": 2.0,
   "loss_multiplier": 0.5,
   "max_bet_pct": 0.05,
-  "min_bet_pct": 0.10,
+  "pause_windows_after_loss": 2,
 
   "assets": ["BTC", "ETH", "SOL", "XRP"],
 
