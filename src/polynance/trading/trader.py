@@ -128,6 +128,18 @@ class SimulatedTrader:
             )
             await self.trading_db.save_state(self.state)
         else:
+            # Recalculate bet size from win streak (handles sizer changes)
+            old_bet = self.state.current_bet_size
+            self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
+                self.state.current_win_streak,
+                self.state.current_bankroll,
+            )
+            if abs(old_bet - self.state.current_bet_size) > 0.01:
+                logger.info(
+                    f"Recalculated bet size: ${old_bet:.2f} -> ${self.state.current_bet_size:.2f} "
+                    f"(streak={self.state.current_win_streak})"
+                )
+
             logger.info(
                 f"Recovered trading state: "
                 f"Bankroll=${self.state.current_bankroll:.2f}, "
