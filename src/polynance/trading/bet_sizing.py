@@ -44,28 +44,31 @@ class AntiMartingaleSizer:
 
     def calculate_next_bet(
         self,
-        current_bet: float,
+        actual_bet_used: float,
         bankroll: float,
         last_outcome: Optional[Literal["win", "loss"]] = None,
     ) -> float:
         """Calculate next bet size based on last outcome.
 
+        This matches backtest_suite.py behavior: multiply the ACTUAL bet used
+        (after cap/floor applied), not the target bet size.
+
         Args:
-            current_bet: Current bet size
-            bankroll: Current bankroll
+            actual_bet_used: The actual bet size used in the trade (after cap/floor)
+            bankroll: Current bankroll (after trade resolved)
             last_outcome: Result of last trade ('win', 'loss', or None for first trade)
 
         Returns:
             Next bet size, constrained by floor and cap
         """
-        # Apply multiplier based on outcome
+        # Apply multiplier to ACTUAL bet used (matches backtest behavior)
         if last_outcome == "win":
-            next_bet = current_bet * self.win_multiplier
+            next_bet = actual_bet_used * self.win_multiplier
         elif last_outcome == "loss":
-            next_bet = current_bet * self.loss_multiplier
+            next_bet = actual_bet_used * self.loss_multiplier
         else:
-            # No outcome (first trade) - use current bet
-            next_bet = current_bet
+            # No outcome (first trade) - use actual bet
+            next_bet = actual_bet_used
 
         # Apply floor (minimum bet)
         next_bet = max(next_bet, self.floor_bet)

@@ -125,15 +125,27 @@ class SimulatedTrader:
 
         # Load any pending trades (for restart recovery)
         pending = await self.trading_db.get_pending_trades()
-        for trade in pending:
-            self.open_trades[trade.asset] = trade
-            logger.info(
-                f"Recovered pending trade: {trade.asset} {trade.direction} "
-                f"at ${trade.entry_price:.3f}"
-            )
 
         if pending:
-            logger.info(f"Recovered {len(pending)} pending trade(s)")
+            logger.info(f"Found {len(pending)} pending trade(s), checking for resolution...")
+
+            for trade in pending:
+                # Check if the window already resolved while we were down
+                resolved = await self._try_resolve_pending_trade(trade)
+
+                if not resolved:
+                    # Window hasn't resolved yet - keep as open trade
+                    self.open_trades[trade.asset] = trade
+                    logger.info(
+                        f"Recovered pending trade: {trade.asset} {trade.direction} "
+                        f"at ${trade.entry_price:.3f} (window still open)"
+                    )
+
+            resolved_count = len(pending) - len(self.open_trades)
+            if resolved_count > 0:
+                logger.info(f"Resolved {resolved_count} trade(s) that completed while offline")
+            if self.open_trades:
+                logger.info(f"Keeping {len(self.open_trades)} trade(s) as open positions")
 
     async def on_sample_at_entry(self, asset: str, sample, state):
         """Handle sample at t=7.5 - check for trade entry.
@@ -410,6 +422,57 @@ class SimulatedTrader:
             f"Bankroll: ${self.state.current_bankroll:.2f} | "
             f"Win Rate: {self.state.win_rate:.1%}"
         )
+
+    async def _try_resolve_pending_trade(self, trade: SimulatedTrade) -> bool:
+        """Try to resolve a pending trade if its window already completed.
+
+        This is called during startup recovery to handle trades that were
+        open when the app crashed/stopped, but whose windows have since resolved.
+
+        Args:
+            trade: The pending trade to check
+
+        Returns:
+            True if the trade was resolved, False if window still pending
+        """
+        asset = trade.asset
+
+        # Check if we have access to this asset's database
+        if asset not in self.asset_databases:
+            logger.warning(
+                f"[{asset}] Cannot check window resolution - no database connection"
+            )
+            return False
+
+        db = self.asset_databases[asset]
+
+        # Look up the window in the asset database
+        window = await db.get_window(trade.window_id, asset)
+
+        if window is None:
+            logger.debug(f"[{asset}] Window {trade.window_id} not found in database")
+            return False
+
+        if window.outcome is None:
+            logger.debug(f"[{asset}] Window {trade.window_id} has no outcome yet")
+            return False
+
+        # Window has resolved! Process the trade
+        logger.info(
+            f"[{asset}] RECOVERY: Found resolved window for pending trade: "
+            f"{trade.direction} -> outcome={window.outcome}"
+        )
+
+        # Temporarily add to open_trades so _resolve_trade can find it
+        self.open_trades[asset] = trade
+
+        # Use the normal resolution logic (this will remove it from open_trades)
+        await self._resolve_trade(asset, window)
+
+        # Save state after recovery resolution
+        await self.trading_db.save_state(self.state)
+
+        return True
 
     # =========================================================================
     # Accessors for Dashboard

@@ -159,6 +159,7 @@ class Application:
             bull_threshold=self.trading_config.get("bull_threshold", 0.80),
             bear_threshold=self.trading_config.get("bear_threshold", 0.20),
             max_bet_pct=self.trading_config.get("max_bet_pct", 0.05),
+            pause_windows_after_loss=self.trading_config.get("pause_windows_after_loss", 2),
         )
         await self.trader.initialize()
 

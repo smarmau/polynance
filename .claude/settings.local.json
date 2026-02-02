@@ -20,7 +20,13 @@
       "Bash(PYTHONPATH=/Volumes/shared_folder/polynance/src python3:*)",
       "Bash(PYTHONPATH=src python:*)",
       "WebFetch(domain:www.polymarketexchange.com)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nWire up max_bet_pct from config to trader\n\n- Add max_bet_pct to to_trading_config\\(\\) in config.py\n- Pass max_bet_pct through main.py to SimulatedTrader\n- Add max_bet_pct parameter to SimulatedTrader.__init__\n- Pass max_bet_pct to AntiMartingaleSizer\n\nThis allows configuring the bet cap percentage via config/trading.json\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push)",
+      "Bash(ssh:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
