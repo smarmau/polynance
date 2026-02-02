@@ -1,5 +1,5 @@
-# Data files - don't commit databases
-data/*.db
+# Data files - don't commit databases or data directory
+data/
 *.db
 
 # Python
@@ -39,10 +39,8 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Analysis reports (optional - uncomment to exclude)
-# analysis/reports/*.png
-# analysis/reports/*.txt
-# analysis/reports/*.json
+# Analysis reports
+analysis/reports/
 
 # Jupyter
 .ipynb_checkpoints/

@@ -552,7 +552,7 @@ class TradingDashboard:
         content.append(f"{self.trader.fee_rate*100:.1f}% + {self.trader.spread_cost*100:.1f}% spread", style="cyan")
         content.append("  |  ", style="dim")
         content.append("Sizing: ", style="dim")
-        content.append("Anti-Martingale (2x/0.5x)", style="cyan")
+        content.append(f"SlowGrowth ({self.trader.growth_per_win*100:.0f}%/win, {self.trader.max_bet_multiplier}x cap)", style="cyan")
         content.append("  |  ", style="dim")
         content.append("Ctrl+C", style="bold")
         content.append(" to exit", style="dim")

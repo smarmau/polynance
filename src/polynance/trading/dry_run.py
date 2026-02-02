@@ -18,11 +18,11 @@ Strategy (default):
     - If pm_yes_price <= 0.20: BUY NO (betting price goes DOWN)
     - Otherwise: NO TRADE
 
-Bet Sizing (Anti-Martingale):
+Bet Sizing (Slow Growth):
     - Base bet: $25
-    - After win: multiply by 2x
-    - After loss: multiply by 0.5x
-    - Cap: 5% of current bankroll
+    - After each win: grow by 10%
+    - After loss: reset to base + pause
+    - Cap: 2x base ($50 max)
     - Floor: $2.50 (10% of base)
 
 Fees:
