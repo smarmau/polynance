@@ -32,7 +32,9 @@ class TradingConfig:
     win_multiplier: float = 2.0
     loss_multiplier: float = 0.5
     max_bet_pct: float = 0.05  # 5% of bankroll
-    min_bet_pct: float = 0.10  # 10% of base bet (floor)
+
+    # Risk management
+    pause_windows_after_loss: int = 2  # Skip N windows after any loss
 
     # Assets to trade
     assets: list = field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
@@ -61,6 +63,7 @@ class TradingConfig:
             "bull_threshold": self.bull_threshold,
             "bear_threshold": self.bear_threshold,
             "max_bet_pct": self.max_bet_pct,
+            "pause_windows_after_loss": self.pause_windows_after_loss,
         }
 
     def save(self, path: Optional[Path] = None):
@@ -138,7 +141,9 @@ def get_default_config_template() -> str:
   "win_multiplier": 2.0,   // Multiply bet by this after a win
   "loss_multiplier": 0.5,  // Multiply bet by this after a loss
   "max_bet_pct": 0.05,     // Maximum bet as % of bankroll (5%)
-  "min_bet_pct": 0.10,     // Minimum bet as % of base bet (10% = $2.50)
+
+  // Risk Management
+  "pause_windows_after_loss": 2,  // Skip N windows after any loss (avoids clustering)
 
   // Assets to Trade
   "assets": ["BTC", "ETH", "SOL", "XRP"],

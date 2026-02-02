@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS sim_state (
     -- System state
     last_window_id TEXT,
     created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL
+    updated_at TIMESTAMP NOT NULL,
+
+    -- Pause-after-loss tracking
+    pause_windows_remaining INTEGER DEFAULT 0
 );
 
 -- Trade records
@@ -115,7 +118,26 @@ class TradingDatabase:
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
 
+        # Run migrations for existing databases
+        await self._run_migrations()
+
         logger.info(f"Connected to trading database: {self.db_path}")
+
+    async def _run_migrations(self):
+        """Run database migrations for schema updates."""
+        # Migration: Add pause_windows_remaining column if it doesn't exist
+        try:
+            cursor = await self._conn.execute("PRAGMA table_info(sim_state)")
+            columns = [row[1] for row in await cursor.fetchall()]
+
+            if "pause_windows_remaining" not in columns:
+                await self._conn.execute(
+                    "ALTER TABLE sim_state ADD COLUMN pause_windows_remaining INTEGER DEFAULT 0"
+                )
+                await self._conn.commit()
+                logger.info("Migration: Added pause_windows_remaining column to sim_state")
+        except Exception as e:
+            logger.debug(f"Migration check: {e}")
 
     async def close(self):
         """Close the database connection."""
@@ -161,6 +183,7 @@ class TradingDatabase:
             last_window_id=row["last_window_id"],
             timestamp=datetime.fromisoformat(row["timestamp"]) if row["timestamp"] else None,
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            pause_windows_remaining=row["pause_windows_remaining"] if "pause_windows_remaining" in row.keys() else 0,
         )
 
     async def save_state(self, state: TradingState):
@@ -174,8 +197,8 @@ class TradingDatabase:
             total_trades, total_wins, total_losses, total_pnl,
             peak_bankroll, max_drawdown, max_drawdown_pct,
             current_win_streak, current_loss_streak, max_win_streak, max_loss_streak,
-            last_window_id, created_at, updated_at
-        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_window_id, created_at, updated_at, pause_windows_remaining
+        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         await self.conn.execute(
@@ -200,6 +223,7 @@ class TradingDatabase:
                 state.last_window_id,
                 state.created_at.isoformat() if state.created_at else now.isoformat(),
                 now.isoformat(),
+                state.pause_windows_remaining,
             ),
         )
         await self.conn.commit()

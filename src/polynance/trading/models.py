@@ -119,6 +119,9 @@ class TradingState:
         default_factory=lambda: datetime.now(timezone.utc)
     )
 
+    # Pause-after-loss: skip N windows after any loss to avoid clustering
+    pause_windows_remaining: int = 0
+
     def __post_init__(self):
         """Initialize peak bankroll if not set."""
         if self.peak_bankroll is None:
@@ -177,6 +180,7 @@ class TradingState:
             "return_pct": self.return_pct,
             "current_drawdown": self.current_drawdown,
             "current_drawdown_pct": self.current_drawdown_pct,
+            "pause_windows_remaining": self.pause_windows_remaining,
         }
 
 

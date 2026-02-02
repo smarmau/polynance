@@ -39,6 +39,7 @@ class SimulatedTrader:
     DEFAULT_BULL_THRESHOLD = 0.80
     DEFAULT_BEAR_THRESHOLD = 0.20
     DEFAULT_MAX_BET_PCT = 0.05  # 5% of bankroll
+    DEFAULT_PAUSE_WINDOWS_AFTER_LOSS = 2  # Skip N windows after any loss
 
     def __init__(
         self,
@@ -51,6 +52,7 @@ class SimulatedTrader:
         bull_threshold: float = DEFAULT_BULL_THRESHOLD,
         bear_threshold: float = DEFAULT_BEAR_THRESHOLD,
         max_bet_pct: float = DEFAULT_MAX_BET_PCT,
+        pause_windows_after_loss: int = DEFAULT_PAUSE_WINDOWS_AFTER_LOSS,
     ):
         """Initialize the simulated trader.
 
@@ -64,6 +66,7 @@ class SimulatedTrader:
             bull_threshold: YES price threshold for bull signal (default: 0.80)
             bear_threshold: YES price threshold for bear signal (default: 0.20)
             max_bet_pct: Maximum bet as % of bankroll (default: 0.05 = 5%)
+            pause_windows_after_loss: Skip N windows after any loss (default: 2)
         """
         self.trading_db = trading_db
         self.asset_databases = asset_databases or {}
@@ -76,6 +79,7 @@ class SimulatedTrader:
         self.bull_threshold = bull_threshold
         self.bear_threshold = bear_threshold
         self.max_bet_pct = max_bet_pct
+        self.pause_windows_after_loss = pause_windows_after_loss
 
         # Bet sizing
         self.sizer = AntiMartingaleSizer(base_bet=base_bet, max_bet_pct=max_bet_pct)
@@ -146,6 +150,14 @@ class SimulatedTrader:
             # Don't open if we already have a position for this asset
             if asset in self.open_trades:
                 logger.debug(f"[{asset}] Already have open position, skipping entry check")
+                return
+
+            # Check if we're in a pause period after a loss
+            if self.state.pause_windows_remaining > 0:
+                logger.info(
+                    f"[{asset}] PAUSED: Skipping entry ({self.state.pause_windows_remaining} windows remaining after loss)"
+                )
+                self._last_signals[asset] = None
                 return
 
             pm_yes = sample.pm_yes_price
@@ -227,6 +239,18 @@ class SimulatedTrader:
             # Resolve any open position for this asset
             if asset in self.open_trades:
                 await self._resolve_trade(asset, window)
+
+            # Decrement pause counter if we're in a pause period
+            # Only decrement once per window (use first asset alphabetically as trigger)
+            # This prevents decrementing 4x for 4 assets in same window
+            if self.state.pause_windows_remaining > 0 and asset == "BTC":
+                self.state.pause_windows_remaining -= 1
+                if self.state.pause_windows_remaining > 0:
+                    logger.info(
+                        f"Pause period: {self.state.pause_windows_remaining} windows remaining"
+                    )
+                else:
+                    logger.info("Pause period ended - resuming trading")
 
             # Save state
             self.state.last_window_id = window.window_id
@@ -325,6 +349,12 @@ class SimulatedTrader:
                 self.state.max_loss_streak,
                 self.state.current_loss_streak,
             )
+            # Trigger pause after loss - skip next N windows
+            if self.pause_windows_after_loss > 0:
+                self.state.pause_windows_remaining = self.pause_windows_after_loss
+                logger.info(
+                    f"[{asset}] LOSS DETECTED: Pausing for {self.pause_windows_after_loss} windows"
+                )
 
         # Update bet size for next trade
         # Pass the ACTUAL bet used (matches backtest behavior)
@@ -418,6 +448,7 @@ class SimulatedTrader:
             "spread_cost": self.spread_cost,
             "bull_threshold": self.bull_threshold,
             "bear_threshold": self.bear_threshold,
+            "pause_windows_after_loss": self.pause_windows_after_loss,
             "sizer": self.sizer.get_config(),
         }
 
