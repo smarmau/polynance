@@ -8,10 +8,10 @@
   "fee_rate": 0.001,
   "spread_cost": 0.005,
 
-  "win_multiplier": 2.0,
-  "loss_multiplier": 0.5,
+  "growth_per_win": 0.10,
+  "max_bet_multiplier": 2.0,
   "max_bet_pct": 0.05,
-  "pause_windows_after_loss": 2,
+  "pause_windows_after_loss": 1,
 
   "assets": ["BTC", "ETH", "SOL", "XRP"],
 

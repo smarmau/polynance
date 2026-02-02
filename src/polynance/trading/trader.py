@@ -8,7 +8,7 @@ from ..db.database import Database
 from ..db.models import Window
 from .models import SimulatedTrade, TradingState, PerAssetStats
 from .database import TradingDatabase
-from .bet_sizing import AntiMartingaleSizer
+from .bet_sizing import SlowGrowthSizer
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ class SimulatedTrader:
     DEFAULT_BEAR_THRESHOLD = 0.20
     DEFAULT_MAX_BET_PCT = 0.05  # 5% of bankroll
     DEFAULT_PAUSE_WINDOWS_AFTER_LOSS = 2  # Skip N windows after any loss
+    DEFAULT_GROWTH_PER_WIN = 0.10  # 10% growth per consecutive win
+    DEFAULT_MAX_BET_MULTIPLIER = 2.0  # Cap bet at 2x base
 
     def __init__(
         self,
@@ -53,6 +55,8 @@ class SimulatedTrader:
         bear_threshold: float = DEFAULT_BEAR_THRESHOLD,
         max_bet_pct: float = DEFAULT_MAX_BET_PCT,
         pause_windows_after_loss: int = DEFAULT_PAUSE_WINDOWS_AFTER_LOSS,
+        growth_per_win: float = DEFAULT_GROWTH_PER_WIN,
+        max_bet_multiplier: float = DEFAULT_MAX_BET_MULTIPLIER,
     ):
         """Initialize the simulated trader.
 
@@ -67,6 +71,8 @@ class SimulatedTrader:
             bear_threshold: YES price threshold for bear signal (default: 0.20)
             max_bet_pct: Maximum bet as % of bankroll (default: 0.05 = 5%)
             pause_windows_after_loss: Skip N windows after any loss (default: 2)
+            growth_per_win: Bet growth per consecutive win (default: 0.10 = 10%)
+            max_bet_multiplier: Maximum bet multiplier on base (default: 2.0)
         """
         self.trading_db = trading_db
         self.asset_databases = asset_databases or {}
@@ -80,9 +86,16 @@ class SimulatedTrader:
         self.bear_threshold = bear_threshold
         self.max_bet_pct = max_bet_pct
         self.pause_windows_after_loss = pause_windows_after_loss
+        self.growth_per_win = growth_per_win
+        self.max_bet_multiplier = max_bet_multiplier
 
-        # Bet sizing
-        self.sizer = AntiMartingaleSizer(base_bet=base_bet, max_bet_pct=max_bet_pct)
+        # Bet sizing - use SlowGrowthSizer instead of AntiMartingale
+        self.sizer = SlowGrowthSizer(
+            base_bet=base_bet,
+            growth_per_win=growth_per_win,
+            max_multiplier=max_bet_multiplier,
+            max_bet_pct=max_bet_pct,
+        )
 
         # State (loaded from DB or initialized)
         self.state: Optional[TradingState] = None
@@ -205,9 +218,9 @@ class SimulatedTrader:
             # Store last signal for dashboard
             self._last_signals[asset] = direction
 
-            # Calculate bet size
-            bet_size = self.sizer.calculate_actual_bet(
-                self.state.current_bet_size,
+            # Calculate bet size based on current win streak
+            bet_size = self.sizer.calculate_bet_for_streak(
+                self.state.current_win_streak,
                 self.state.current_bankroll,
             )
 
@@ -368,12 +381,11 @@ class SimulatedTrader:
                     f"[{asset}] LOSS DETECTED: Pausing for {self.pause_windows_after_loss} windows"
                 )
 
-        # Update bet size for next trade
-        # Pass the ACTUAL bet used (matches backtest behavior)
-        self.state.current_bet_size = self.sizer.calculate_next_bet(
-            trade.bet_size,  # Use actual bet from this trade, not target
+        # Update bet size for next trade based on new win streak
+        # SlowGrowthSizer uses win streak count, not previous bet
+        self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
+            self.state.current_win_streak,
             self.state.current_bankroll,
-            "win" if won else "loss",
         )
 
         # Update drawdown tracking

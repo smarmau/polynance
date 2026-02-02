@@ -28,9 +28,9 @@ class TradingConfig:
     fee_rate: float = 0.02  # 2% on profits
     spread_cost: float = 0.006  # 0.6% on all trades
 
-    # Bet sizing (Anti-Martingale)
-    win_multiplier: float = 2.0
-    loss_multiplier: float = 0.5
+    # Bet sizing (Slow Growth)
+    growth_per_win: float = 0.10  # 10% growth per consecutive win
+    max_bet_multiplier: float = 2.0  # Cap at 2x base bet
     max_bet_pct: float = 0.05  # 5% of bankroll
 
     # Risk management
@@ -64,6 +64,8 @@ class TradingConfig:
             "bear_threshold": self.bear_threshold,
             "max_bet_pct": self.max_bet_pct,
             "pause_windows_after_loss": self.pause_windows_after_loss,
+            "growth_per_win": self.growth_per_win,
+            "max_bet_multiplier": self.max_bet_multiplier,
         }
 
     def save(self, path: Optional[Path] = None):
@@ -137,10 +139,10 @@ def get_default_config_template() -> str:
   "fee_rate": 0.02,      // 2% fee on profits only
   "spread_cost": 0.006,  // 0.6% spread cost on all trades
 
-  // Bet Sizing (Anti-Martingale)
-  "win_multiplier": 2.0,   // Multiply bet by this after a win
-  "loss_multiplier": 0.5,  // Multiply bet by this after a loss
-  "max_bet_pct": 0.05,     // Maximum bet as % of bankroll (5%)
+  // Bet Sizing (Slow Growth)
+  "growth_per_win": 0.10,      // Grow bet 10% per consecutive win
+  "max_bet_multiplier": 2.0,   // Cap bet at 2x base ($50 max on $25 base)
+  "max_bet_pct": 0.05,         // Maximum bet as % of bankroll (5%)
 
   // Risk Management
   "pause_windows_after_loss": 2,  // Skip N windows after any loss (avoids clustering)

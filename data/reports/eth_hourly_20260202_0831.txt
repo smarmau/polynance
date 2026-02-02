@@ -1,26 +1,26 @@
 ======================================================================
-MARKET PREDICTIVENESS ANALYSIS: SOL
+MARKET PREDICTIVENESS ANALYSIS: ETH
 ======================================================================
 
-Sample Size: 805 windows
-  Up: 379 (47.1%)
-  Down: 426 (52.9%)
+Sample Size: 804 windows
+  Up: 384 (47.8%)
+  Down: 420 (52.2%)
 
-Strong Predictions (YES > 0.6 or < 0.4): 544
-  Correct: 417
-  Accuracy: 76.7%
+Strong Predictions (YES > 0.6 or < 0.4): 545
+  Correct: 416
+  Accuracy: 76.3%
 
 Binomial Test (Is market better than random?):
-  Market is significantly predictive (76.7% accuracy, p=0.0000)
+  Market is significantly predictive (76.3% accuracy, p=0.0000)
   ✓ SIGNIFICANT at p < 0.05
 
-ROC AUC Score: 0.777
+ROC AUC Score: 0.765
   (0.5 = random, 1.0 = perfect)
-  Optimal Threshold: 0.505
+  Optimal Threshold: 0.525
 
 Best Prediction Timepoint: t10
 
 CONCLUSION:
   ✓ Market shows statistically significant predictive power
-  Accuracy: 76.7% (p < 0.05)
+  Accuracy: 76.3% (p < 0.05)
 ======================================================================

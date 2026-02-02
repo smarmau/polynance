@@ -160,6 +160,8 @@ class Application:
             bear_threshold=self.trading_config.get("bear_threshold", 0.20),
             max_bet_pct=self.trading_config.get("max_bet_pct", 0.05),
             pause_windows_after_loss=self.trading_config.get("pause_windows_after_loss", 2),
+            growth_per_win=self.trading_config.get("growth_per_win", 0.10),
+            max_bet_multiplier=self.trading_config.get("max_bet_multiplier", 2.0),
         )
         await self.trader.initialize()
 
