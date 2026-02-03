@@ -162,6 +162,7 @@ class Application:
             pause_windows_after_loss=self.trading_config.get("pause_windows_after_loss", 2),
             growth_per_win=self.trading_config.get("growth_per_win", 0.10),
             max_bet_multiplier=self.trading_config.get("max_bet_multiplier", 2.0),
+            min_trajectory=self.trading_config.get("min_trajectory", 0.20),
         )
         await self.trader.initialize()
 

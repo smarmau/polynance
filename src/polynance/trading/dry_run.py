@@ -5,7 +5,7 @@ This module provides the CLI entry point for running the polynance
 simulated trading bot. It collects live data from Polymarket and
 executes simulated trades based on the configured strategy.
 
-Configuration is loaded from config/trading.json by default.
+Configuration is loaded from config/config.json by default.
 
 Usage:
     python -m polynance.trading.dry_run
@@ -56,14 +56,14 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Configuration:
-    Settings are loaded from config/trading.json by default.
+    Settings are loaded from config/config.json by default.
     Edit that file to change strategy parameters, bankroll, etc.
 
     To create a fresh config file with defaults:
         python -m polynance.trading.dry_run --init-config
 
 Examples:
-    # Run with config file (default: config/trading.json)
+    # Run with config file (default: config/config.json)
     python -m polynance.trading.dry_run
 
     # Use a different config file

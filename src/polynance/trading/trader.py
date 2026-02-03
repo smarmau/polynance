@@ -42,6 +42,7 @@ class SimulatedTrader:
     DEFAULT_PAUSE_WINDOWS_AFTER_LOSS = 2  # Skip N windows after any loss
     DEFAULT_GROWTH_PER_WIN = 0.10  # 10% growth per consecutive win
     DEFAULT_MAX_BET_MULTIPLIER = 2.0  # Cap bet at 2x base
+    DEFAULT_MIN_TRAJECTORY = 0.20  # Min PM price movement from t=0 to entry
 
     def __init__(
         self,
@@ -57,6 +58,7 @@ class SimulatedTrader:
         pause_windows_after_loss: int = DEFAULT_PAUSE_WINDOWS_AFTER_LOSS,
         growth_per_win: float = DEFAULT_GROWTH_PER_WIN,
         max_bet_multiplier: float = DEFAULT_MAX_BET_MULTIPLIER,
+        min_trajectory: float = DEFAULT_MIN_TRAJECTORY,
     ):
         """Initialize the simulated trader.
 
@@ -73,6 +75,7 @@ class SimulatedTrader:
             pause_windows_after_loss: Skip N windows after any loss (default: 2)
             growth_per_win: Bet growth per consecutive win (default: 0.10 = 10%)
             max_bet_multiplier: Maximum bet multiplier on base (default: 2.0)
+            min_trajectory: Min PM price movement from t=0 to entry (default: 0.20)
         """
         self.trading_db = trading_db
         self.asset_databases = asset_databases or {}
@@ -88,6 +91,7 @@ class SimulatedTrader:
         self.pause_windows_after_loss = pause_windows_after_loss
         self.growth_per_win = growth_per_win
         self.max_bet_multiplier = max_bet_multiplier
+        self.min_trajectory = min_trajectory
 
         # Bet sizing - use SlowGrowthSizer instead of AntiMartingale
         self.sizer = SlowGrowthSizer(
@@ -227,14 +231,34 @@ class SimulatedTrader:
                 self._last_signals[asset] = None
                 return
 
+            # Trajectory filter: check PM price movement from t=0 to now
+            # Low trajectory = price was already near signal at window start = weak conviction
+            if self.min_trajectory > 0:
+                # Get t=0 sample from state
+                samples_by_t = {s.t_minutes: s for s in state.samples}
+                t0_sample = samples_by_t.get(0.0)
+
+                if t0_sample and t0_sample.pm_yes_price is not None:
+                    trajectory = abs(pm_yes - t0_sample.pm_yes_price)
+                    if trajectory < self.min_trajectory:
+                        logger.info(
+                            f"[{asset}] SKIPPED {direction.upper()}: trajectory {trajectory:.3f} "
+                            f"< {self.min_trajectory} (t0={t0_sample.pm_yes_price:.3f}, t7.5={pm_yes:.3f})"
+                        )
+                        self._last_signals[asset] = f"{direction}-filtered"
+                        return
+                    else:
+                        logger.debug(
+                            f"[{asset}] Trajectory OK: {trajectory:.3f} >= {self.min_trajectory}"
+                        )
+                else:
+                    logger.debug(f"[{asset}] No t=0 sample available for trajectory check, proceeding")
+
             # Store last signal for dashboard
             self._last_signals[asset] = direction
 
-            # Calculate bet size based on current win streak
-            bet_size = self.sizer.calculate_bet_for_streak(
-                self.state.current_win_streak,
-                self.state.current_bankroll,
-            )
+            # Fixed bet size
+            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
 
             # Create trade
             trade = SimulatedTrade(
@@ -536,6 +560,7 @@ class SimulatedTrader:
             "bull_threshold": self.bull_threshold,
             "bear_threshold": self.bear_threshold,
             "pause_windows_after_loss": self.pause_windows_after_loss,
+            "min_trajectory": self.min_trajectory,
             "sizer": self.sizer.get_config(),
         }
 
