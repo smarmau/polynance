@@ -185,9 +185,10 @@ class SimulatedTrader:
         self._prev_window_pm: Dict[str, float] = {}
 
         # Consensus: buffer samples at consensus entry time to evaluate cross-asset
-        # Maps window_id -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
+        # Maps time_key (e.g. "20260206_0445") -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
+        # Uses time-based key (not asset-specific window_id) so all 4 assets group together
         self._consensus_buffer: Dict[str, Dict[str, dict]] = {}
-        # Track which window_id we've already evaluated consensus for
+        # Track which time_keys we've already evaluated consensus for
         self._consensus_evaluated: set = set()
 
     async def initialize(self):
@@ -814,55 +815,68 @@ class SimulatedTrader:
         Phase 2 - Current window consensus: Count assets confirming reversal direction
                   Need >= min_agree assets with current pm confirming the reversal
         Only trade assets that individually pass Phase 2 confirmation.
+
+        Assets are always buffered even if pm_yes is None, so a single failed
+        API call doesn't block consensus evaluation for the entire window.
         """
         try:
             pm_yes = sample.pm_yes_price
-            if pm_yes is None:
-                logger.debug(f"[{asset}] No pm_yes at consensus entry time")
-                self._last_signals[asset] = None
-                return
 
             # Buffer this asset's data for the current window
-            window_id = sample.window_id
-            if window_id not in self._consensus_buffer:
-                self._consensus_buffer[window_id] = {}
+            # Always buffer — even None pm_yes — so we don't block waiting for it
+            #
+            # IMPORTANT: Use a time-based key, NOT sample.window_id.
+            # window_id is asset-specific (e.g., "BTC_20260206_0445") so each asset
+            # would go into a separate bucket and consensus would never fire.
+            # Extract the time portion: "YYYYMMDD_HHMM" to group all assets together.
+            time_key = "_".join(sample.window_id.split("_")[1:])
 
-            self._consensus_buffer[window_id][asset] = {
-                "pm_yes": pm_yes,
+            if time_key not in self._consensus_buffer:
+                self._consensus_buffer[time_key] = {}
+
+            self._consensus_buffer[time_key][asset] = {
+                "pm_yes": pm_yes,  # May be None — consensus eval handles this
                 "sample": sample,
                 "state": state,
             }
 
+            if pm_yes is None:
+                logger.debug(f"[{asset}] No pm_yes at consensus entry time (buffered as None)")
+                self._last_signals[asset] = None
+
             # Check if all assets have reported for this window
             expected_assets = set(self.asset_databases.keys())
-            arrived_assets = set(self._consensus_buffer[window_id].keys())
+            arrived_assets = set(self._consensus_buffer[time_key].keys())
 
-            if arrived_assets >= expected_assets and window_id not in self._consensus_evaluated:
+            if arrived_assets >= expected_assets and time_key not in self._consensus_evaluated:
                 # All assets are in — evaluate consensus
-                self._consensus_evaluated.add(window_id)
-                await self._evaluate_consensus(window_id)
+                self._consensus_evaluated.add(time_key)
+                await self._evaluate_consensus(time_key)
 
                 # Clean up old buffers (keep only current window)
-                old_windows = [
-                    wid for wid in self._consensus_buffer
-                    if wid != window_id
+                old_keys = [
+                    k for k in self._consensus_buffer
+                    if k != time_key
                 ]
-                for wid in old_windows:
-                    del self._consensus_buffer[wid]
+                for k in old_keys:
+                    del self._consensus_buffer[k]
                 # Clean up old evaluated set
-                self._consensus_evaluated -= set(old_windows)
+                self._consensus_evaluated -= set(old_keys)
 
         except Exception as e:
             logger.error(f"[{asset}] Error in consensus entry buffer: {e}", exc_info=True)
 
-    async def _evaluate_consensus(self, window_id: str):
+    async def _evaluate_consensus(self, time_key: str):
         """Evaluate cross-asset consensus for a window and enter trades.
 
         Phase 1: Count assets with strong previous window (contrarian setup)
         Phase 2: Count assets confirming reversal in current window
         Only trade if both phases pass min_agree threshold.
+
+        Args:
+            time_key: Time-based window key (e.g., "20260206_0445"), NOT asset-specific window_id.
         """
-        buffer = self._consensus_buffer.get(window_id, {})
+        buffer = self._consensus_buffer.get(time_key, {})
         if not buffer:
             return
 
@@ -897,9 +911,15 @@ class SimulatedTrader:
                 f"prev DOWN (pm <= {1.0 - thresh:.2f}) → expect BULL reversal"
             )
         else:
-            logger.debug(
+            # Log prev PM values for visibility
+            prev_vals = {
+                a: f"{self._prev_window_pm.get(a, 'N/A')}"
+                for a in buffer
+            }
+            logger.info(
                 f"[CONSENSUS] Phase 1 FAIL: strong_up={prev_strong_up}, "
-                f"strong_down={prev_strong_down}, need >= {min_agree}"
+                f"strong_down={prev_strong_down}, need >= {min_agree}. "
+                f"Prev PMs: {prev_vals}"
             )
             for asset in buffer:
                 self._last_signals[asset] = None
@@ -909,6 +929,8 @@ class SimulatedTrader:
         confirming_assets = []
         for asset, data in buffer.items():
             pm_yes = data["pm_yes"]
+            if pm_yes is None:
+                continue  # Skip assets with no price data
             if contrarian_dir == "bear" and pm_yes <= self.contrarian_bear_thresh:
                 confirming_assets.append(asset)
             elif contrarian_dir == "bull" and pm_yes >= self.contrarian_bull_thresh:
