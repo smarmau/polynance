@@ -12,22 +12,25 @@ Usage:
     python -m polynance.trading.dry_run --config path/to/config.json
     polynance-trade
 
-Strategy (default):
-    At the 7.5-minute mark of each 15-minute window:
-    - If pm_yes_price >= 0.80: BUY YES (betting price goes UP)
-    - If pm_yes_price <= 0.20: BUY NO (betting price goes DOWN)
-    - Otherwise: NO TRADE
+Strategy (default - two-stage):
+    Stage 1 (t=7.5 min): Check for initial signal
+    - If pm_yes >= 0.70 → pending BULL signal
+    - If pm_yes <= 0.30 → pending BEAR signal
 
-Bet Sizing (Slow Growth):
-    - Base bet: $25
-    - After each win: grow by 10%
-    - After loss: reset to base + pause
-    - Cap: 2x base ($50 max)
-    - Floor: $2.50 (10% of base)
+    Stage 2 (t=10 min): Confirm signal still strong
+    - If pm_yes >= 0.85 → CONFIRM BULL, enter trade at t=10 price
+    - If pm_yes <= 0.15 → CONFIRM BEAR, enter trade at t=10 price
+    - Otherwise → signal "faded", NO TRADE (filters ~13% of false signals)
+
+    This filters out "faders" - signals that appear strong at t=7.5
+    but reverse by t=10, which have ~61% WR vs 95% for confirmed signals.
+
+Bet Sizing:
+    - Fixed $50 per trade (capped at 5% of bankroll)
 
 Fees:
-    - 2% fee on profits only
-    - 0.6% spread cost on all trades
+    - 0.1% taker fee on contract premium
+    - 0.5% spread/slippage estimate
 """
 
 import argparse
@@ -72,9 +75,10 @@ Examples:
     # Reset trading state and start fresh
     python -m polynance.trading.dry_run --reset
 
-Strategy:
-    At t=7.5 min: If pm_yes >= bull_threshold → BUY YES (bull)
-    At t=7.5 min: If pm_yes <= bear_threshold → BUY NO (bear)
+Strategy (two-stage default):
+    At t=7.5: Signal if pm_yes >= signal_threshold_bull or <= signal_threshold_bear
+    At t=10:  Confirm if pm_yes >= confirm_threshold_bull or <= confirm_threshold_bear
+    Filters out "fader" signals that reverse between t=7.5 and t=10
         """,
     )
 
@@ -124,11 +128,20 @@ async def async_main(args, config: TradingConfig):
     logger.info("POLYNANCE SIMULATED TRADING BOT (DRY RUN)")
     logger.info("=" * 60)
     logger.info(f"Config file: {args.config}")
+    logger.info(f"Entry Mode: {config.entry_mode}")
     logger.info(f"Assets: {config.assets}")
     logger.info(f"Initial Bankroll: ${config.initial_bankroll:,.2f}")
     logger.info(f"Base Bet: ${config.base_bet:.2f}")
-    logger.info(f"Bull Threshold: >= {config.bull_threshold}")
-    logger.info(f"Bear Threshold: <= {config.bear_threshold}")
+    if config.entry_mode == "contrarian":
+        logger.info(f"Prev Window Thresh: >= {config.contrarian_prev_thresh}")
+        logger.info(f"Entry: {config.contrarian_entry_time}, Exit: {config.contrarian_exit_time}")
+        logger.info(f"Bull Confirm: >= {config.contrarian_bull_thresh}, Bear Confirm: <= {config.contrarian_bear_thresh}")
+    elif config.entry_mode == "two_stage":
+        logger.info(f"Signal (t=7.5): Bull >= {config.signal_threshold_bull}, Bear <= {config.signal_threshold_bear}")
+        logger.info(f"Confirm (t=10): Bull >= {config.confirm_threshold_bull}, Bear <= {config.confirm_threshold_bear}")
+    else:
+        logger.info(f"Bull Threshold: >= {config.bull_threshold}")
+        logger.info(f"Bear Threshold: <= {config.bear_threshold}")
     logger.info(f"Fee Rate: {config.fee_rate*100:.1f}%")
     logger.info(f"Spread Cost: {config.spread_cost*100:.1f}%")
     logger.info("=" * 60)

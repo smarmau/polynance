@@ -16,9 +16,31 @@ DEFAULT_CONFIG_PATH = Path("config/config.json")
 class TradingConfig:
     """Trading configuration settings."""
 
-    # Strategy thresholds
+    # Entry mode: "two_stage", "single", or "contrarian"
+    # - two_stage: signal at t=7.5, confirm at t=10, hold to resolution
+    # - single: enter at t=7.5, hold to resolution
+    # - contrarian: after strong prev window, enter at t=0, sell at t=12.5
+    entry_mode: str = "two_stage"
+
+    # Two-stage thresholds (entry_mode="two_stage")
+    signal_threshold_bull: float = 0.70  # t=7.5: initial signal if pm_yes >= this
+    signal_threshold_bear: float = 0.30  # t=7.5: initial signal if pm_yes <= this
+    confirm_threshold_bull: float = 0.85  # t=10: confirm and enter if pm_yes >= this
+    confirm_threshold_bear: float = 0.15  # t=10: confirm and enter if pm_yes <= this
+
+    # Single-mode thresholds (entry_mode="single", also used as legacy fallback)
     bull_threshold: float = 0.80  # BUY YES if pm_yes >= this
     bear_threshold: float = 0.20  # BUY NO if pm_yes <= this
+
+    # Contrarian thresholds (entry_mode="contrarian")
+    # Previous window strength: pm@t12.5 must be >= this (or <= 1-this) to trigger
+    contrarian_prev_thresh: float = 0.75
+    # Current window confirmation: entry pm must confirm reversal direction
+    contrarian_bull_thresh: float = 0.60  # enter bull if pm_yes >= this (after prev strong DOWN)
+    contrarian_bear_thresh: float = 0.40  # enter bear if pm_yes <= this (after prev strong UP)
+    # Entry/exit timing for contrarian
+    contrarian_entry_time: str = "t0"    # when to enter: t0, t2.5, t5
+    contrarian_exit_time: str = "t12.5"  # when to exit: t10, t12.5
 
     # Portfolio settings
     initial_bankroll: float = 1000.0
@@ -59,6 +81,11 @@ class TradingConfig:
     def to_trading_config(self) -> dict:
         """Convert to trading_config dict for Application."""
         return {
+            "entry_mode": self.entry_mode,
+            "signal_threshold_bull": self.signal_threshold_bull,
+            "signal_threshold_bear": self.signal_threshold_bear,
+            "confirm_threshold_bull": self.confirm_threshold_bull,
+            "confirm_threshold_bear": self.confirm_threshold_bear,
             "initial_bankroll": self.initial_bankroll,
             "base_bet": self.base_bet,
             "fee_rate": self.fee_rate,
@@ -70,6 +97,11 @@ class TradingConfig:
             "growth_per_win": self.growth_per_win,
             "max_bet_multiplier": self.max_bet_multiplier,
             "min_trajectory": self.min_trajectory,
+            "contrarian_prev_thresh": self.contrarian_prev_thresh,
+            "contrarian_bull_thresh": self.contrarian_bull_thresh,
+            "contrarian_bear_thresh": self.contrarian_bear_thresh,
+            "contrarian_entry_time": self.contrarian_entry_time,
+            "contrarian_exit_time": self.contrarian_exit_time,
         }
 
     def save(self, path: Optional[Path] = None):
@@ -131,7 +163,16 @@ class TradingConfig:
 def get_default_config_template() -> str:
     """Get a formatted JSON template with comments for documentation."""
     return """{
-  // Strategy Thresholds
+  // Entry Mode: "two_stage" (signal at t=7.5, confirm at t=10) or "single" (enter at t=7.5)
+  "entry_mode": "two_stage",
+
+  // Two-Stage Thresholds
+  "signal_threshold_bull": 0.70,   // t=7.5: initial bull signal if pm_yes >= this
+  "signal_threshold_bear": 0.30,   // t=7.5: initial bear signal if pm_yes <= this
+  "confirm_threshold_bull": 0.85,  // t=10: confirm bull entry if pm_yes >= this
+  "confirm_threshold_bear": 0.15,  // t=10: confirm bear entry if pm_yes <= this
+
+  // Single-Mode Thresholds (legacy / entry_mode="single")
   "bull_threshold": 0.80,    // BUY YES if pm_yes >= this value
   "bear_threshold": 0.20,    // BUY NO if pm_yes <= this value
 

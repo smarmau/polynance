@@ -1,4 +1,17 @@
 {
+  "entry_mode": "contrarian",
+
+  "contrarian_prev_thresh": 0.75,
+  "contrarian_bull_thresh": 0.60,
+  "contrarian_bear_thresh": 0.40,
+  "contrarian_entry_time": "t0",
+  "contrarian_exit_time": "t12.5",
+
+  "signal_threshold_bull": 0.70,
+  "signal_threshold_bear": 0.30,
+  "confirm_threshold_bull": 0.85,
+  "confirm_threshold_bear": 0.15,
+
   "bull_threshold": 0.80,
   "bear_threshold": 0.20,
 

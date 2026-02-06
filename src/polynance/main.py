@@ -163,23 +163,79 @@ class Application:
             growth_per_win=self.trading_config.get("growth_per_win", 0.10),
             max_bet_multiplier=self.trading_config.get("max_bet_multiplier", 2.0),
             min_trajectory=self.trading_config.get("min_trajectory", 0.20),
+            entry_mode=self.trading_config.get("entry_mode", "two_stage"),
+            signal_threshold_bull=self.trading_config.get("signal_threshold_bull", 0.70),
+            signal_threshold_bear=self.trading_config.get("signal_threshold_bear", 0.30),
+            confirm_threshold_bull=self.trading_config.get("confirm_threshold_bull", 0.85),
+            confirm_threshold_bear=self.trading_config.get("confirm_threshold_bear", 0.15),
+            contrarian_prev_thresh=self.trading_config.get("contrarian_prev_thresh", 0.75),
+            contrarian_bull_thresh=self.trading_config.get("contrarian_bull_thresh", 0.60),
+            contrarian_bear_thresh=self.trading_config.get("contrarian_bear_thresh", 0.40),
+            contrarian_entry_time=self.trading_config.get("contrarian_entry_time", "t0"),
+            contrarian_exit_time=self.trading_config.get("contrarian_exit_time", "t12.5"),
         )
         await self.trader.initialize()
 
-        logger.info(
-            f"Trading engine initialized: "
-            f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
-            f"Bull>={self.trading_config.get('bull_threshold', 0.80)}, "
-            f"Bear<={self.trading_config.get('bear_threshold', 0.20)}"
-        )
+        entry_mode = self.trading_config.get("entry_mode", "two_stage")
+        if entry_mode == "contrarian":
+            logger.info(
+                f"Trading engine initialized (CONTRARIAN): "
+                f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
+                f"Prev thresh={self.trading_config.get('contrarian_prev_thresh', 0.75)}, "
+                f"Entry={self.trading_config.get('contrarian_entry_time', 't0')} "
+                f"Exit={self.trading_config.get('contrarian_exit_time', 't12.5')}, "
+                f"Bull>={self.trading_config.get('contrarian_bull_thresh', 0.60)} "
+                f"Bear<={self.trading_config.get('contrarian_bear_thresh', 0.40)}"
+            )
+        elif entry_mode == "two_stage":
+            logger.info(
+                f"Trading engine initialized (TWO-STAGE): "
+                f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
+                f"Signal: Bull>={self.trading_config.get('signal_threshold_bull', 0.70)} Bear<={self.trading_config.get('signal_threshold_bear', 0.30)}, "
+                f"Confirm: Bull>={self.trading_config.get('confirm_threshold_bull', 0.85)} Bear<={self.trading_config.get('confirm_threshold_bear', 0.15)}"
+            )
+        else:
+            logger.info(
+                f"Trading engine initialized (SINGLE): "
+                f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
+                f"Bull>={self.trading_config.get('bull_threshold', 0.80)}, "
+                f"Bear<={self.trading_config.get('bear_threshold', 0.20)}"
+            )
 
     async def _on_sample_collected(self, asset: str, sample, state):
-        """Called when a sample is collected - check for trade entry at t=7.5."""
-        if self.trader and sample.t_minutes == 7.5:
-            try:
-                await self.trader.on_sample_at_entry(asset, sample, state)
-            except Exception as e:
-                logger.error(f"[{asset}] Trading entry error: {e}", exc_info=True)
+        """Called when a sample is collected - check for trade signals.
+
+        Two-stage mode: signal at t=7.5, confirm at t=10.
+        Single mode: entry at t=7.5.
+        Contrarian mode: entry at configured time (default t=0), exit at configured time (default t=12.5).
+        """
+        if not self.trader:
+            return
+
+        try:
+            entry_mode = self.trading_config.get("entry_mode", "two_stage")
+
+            if entry_mode == "contrarian":
+                # Contrarian: entry and exit at configured sample points
+                entry_t = self.trader._time_to_minutes.get(
+                    self.trader.contrarian_entry_time, 0.0
+                )
+                exit_t = self.trader._time_to_minutes.get(
+                    self.trader.contrarian_exit_time, 12.5
+                )
+
+                if sample.t_minutes == entry_t:
+                    await self.trader.on_sample_at_contrarian_entry(asset, sample, state)
+                elif sample.t_minutes == exit_t:
+                    await self.trader.on_sample_at_contrarian_exit(asset, sample, state)
+            else:
+                # Two-stage / single modes
+                if sample.t_minutes == 7.5:
+                    await self.trader.on_sample_at_signal(asset, sample, state)
+                elif sample.t_minutes == 10.0:
+                    await self.trader.on_sample_at_confirm(asset, sample, state)
+        except Exception as e:
+            logger.error(f"[{asset}] Trading signal/entry error: {e}", exc_info=True)
 
     async def _on_window_complete(self, asset: str, window: Window):
         """Called when a window completes - run analysis and trading."""
