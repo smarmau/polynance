@@ -16,10 +16,11 @@ DEFAULT_CONFIG_PATH = Path("config/config.json")
 class TradingConfig:
     """Trading configuration settings."""
 
-    # Entry mode: "two_stage", "single", or "contrarian"
+    # Entry mode: "two_stage", "single", "contrarian", or "contrarian_consensus"
     # - two_stage: signal at t=7.5, confirm at t=10, hold to resolution
     # - single: enter at t=7.5, hold to resolution
     # - contrarian: after strong prev window, enter at t=0, sell at t=12.5
+    # - contrarian_consensus: contrarian + require N-of-4 assets to agree
     entry_mode: str = "two_stage"
 
     # Two-stage thresholds (entry_mode="two_stage")
@@ -32,7 +33,7 @@ class TradingConfig:
     bull_threshold: float = 0.80  # BUY YES if pm_yes >= this
     bear_threshold: float = 0.20  # BUY NO if pm_yes <= this
 
-    # Contrarian thresholds (entry_mode="contrarian")
+    # Contrarian thresholds (entry_mode="contrarian" or "contrarian_consensus")
     # Previous window strength: pm@t12.5 must be >= this (or <= 1-this) to trigger
     contrarian_prev_thresh: float = 0.75
     # Current window confirmation: entry pm must confirm reversal direction
@@ -41,6 +42,12 @@ class TradingConfig:
     # Entry/exit timing for contrarian
     contrarian_entry_time: str = "t0"    # when to enter: t0, t2.5, t5
     contrarian_exit_time: str = "t12.5"  # when to exit: t10, t12.5
+
+    # Consensus settings (entry_mode="contrarian_consensus")
+    # Requires N-of-4 assets to agree on both previous window strength AND current reversal
+    consensus_min_agree: int = 3          # minimum assets agreeing (out of 4)
+    consensus_entry_time: str = "t5"      # when to check consensus & enter (t0, t2.5, t5)
+    consensus_exit_time: str = "t12.5"    # when to exit consensus trades
 
     # Portfolio settings
     initial_bankroll: float = 1000.0
@@ -102,6 +109,9 @@ class TradingConfig:
             "contrarian_bear_thresh": self.contrarian_bear_thresh,
             "contrarian_entry_time": self.contrarian_entry_time,
             "contrarian_exit_time": self.contrarian_exit_time,
+            "consensus_min_agree": self.consensus_min_agree,
+            "consensus_entry_time": self.consensus_entry_time,
+            "consensus_exit_time": self.consensus_exit_time,
         }
 
     def save(self, path: Optional[Path] = None):

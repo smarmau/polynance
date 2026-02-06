@@ -152,16 +152,22 @@ class TradingDashboard:
         time_into_window_min = time_into_window_sec / 60
 
         is_contrarian = self.trader.entry_mode == "contrarian"
+        is_consensus = self.trader.entry_mode == "contrarian_consensus"
+        is_contrarian_family = is_contrarian or is_consensus
         is_two_stage = self.trader.entry_mode == "two_stage"
 
         # Resolution time is at t=15 minutes (900 seconds)
         resolution_time_sec = 15 * 60  # 900 seconds
         time_to_resolution = resolution_time_sec - time_into_window_sec
 
-        if is_contrarian:
-            # Contrarian: entry at configured time, exit at configured time
-            entry_min = self.trader._time_to_minutes.get(self.trader.contrarian_entry_time, 0.0)
-            exit_min = self.trader._time_to_minutes.get(self.trader.contrarian_exit_time, 12.5)
+        if is_contrarian_family:
+            # Contrarian/Consensus: entry at configured time, exit at configured time
+            if is_consensus:
+                entry_min = self.trader._time_to_minutes.get(self.trader.consensus_entry_time, 5.0)
+                exit_min = self.trader._time_to_minutes.get(self.trader.consensus_exit_time, 12.5)
+            else:
+                entry_min = self.trader._time_to_minutes.get(self.trader.contrarian_entry_time, 0.0)
+                exit_min = self.trader._time_to_minutes.get(self.trader.contrarian_exit_time, 12.5)
             entry_sec = entry_min * 60
             exit_sec = exit_min * 60
             time_to_entry = entry_sec - time_into_window_sec
@@ -246,7 +252,9 @@ class TradingDashboard:
         # Build header content
         title = Text()
         title.append("POLYNANCE TRADING BOT ", style="bold cyan")
-        if is_contrarian:
+        if is_consensus:
+            title.append("(Contrarian+Consensus Mode)", style="magenta")
+        elif is_contrarian:
             title.append("(Contrarian Mode)", style="magenta")
         else:
             title.append("(Dry Run Mode)", style="dim")
@@ -262,7 +270,7 @@ class TradingDashboard:
         # Line 3: Countdown timers
         line3 = Text()
         line3.append(f"\n  ", style="dim")
-        if is_contrarian:
+        if is_contrarian_family:
             line3.append(f"ENTRY in: ", style="yellow")
         else:
             line3.append(f"SIGNAL in: ", style="yellow")
@@ -501,14 +509,14 @@ class TradingDashboard:
             pnl_color = "green" if total_pnl > 0 else "red" if total_pnl < 0 else "dim"
 
             signal_str = ""
-            if last_signal in ("bull", "bull-contrarian"):
+            if last_signal in ("bull", "bull-contrarian", "bull-consensus"):
                 signal_str = "[green]BULL[/green]"
-            elif last_signal in ("bear", "bear-contrarian"):
+            elif last_signal in ("bear", "bear-contrarian", "bear-consensus"):
                 signal_str = "[red]BEAR[/red]"
-            elif last_signal == "bull-no-confirm":
-                signal_str = "[yellow]B-NC[/yellow]"
-            elif last_signal == "bear-no-confirm":
-                signal_str = "[yellow]R-NC[/yellow]"
+            elif last_signal and "no-consensus" in last_signal:
+                signal_str = "[yellow]N-CS[/yellow]"
+            elif last_signal and "no-confirm" in last_signal:
+                signal_str = "[yellow]N-CF[/yellow]"
             elif last_signal and "pending" in last_signal:
                 signal_str = "[yellow]PEND[/yellow]"
             elif last_signal and "faded" in last_signal:
@@ -532,19 +540,32 @@ class TradingDashboard:
         """Create the current window slot status panel.
 
         Shows different columns depending on entry mode:
-        - Contrarian: Prev PM, @t0, Now, Status
+        - Contrarian/Consensus: Prev PM, @entry, Now, Status
         - Two-stage: @t7.5, @t10, Now, Status
         - Single: @t7.5, Now, Status
         """
         is_contrarian = self.trader.entry_mode == "contrarian"
+        is_consensus = self.trader.entry_mode == "contrarian_consensus"
+        is_contrarian_family = is_contrarian or is_consensus
         is_two_stage = self.trader.entry_mode == "two_stage"
+
+        # Determine entry time label for contrarian family
+        if is_consensus:
+            entry_t_label = self.trader.consensus_entry_time
+        elif is_contrarian:
+            entry_t_label = self.trader.contrarian_entry_time
+        else:
+            entry_t_label = "t7.5"
+
+        # Get entry_t_minutes for extracting sample price
+        entry_t_min = self.trader._time_to_minutes.get(entry_t_label, 0.0) if is_contrarian_family else 7.5
 
         table = Table(show_header=True, header_style="bold white", expand=True, box=None)
         table.add_column("Asset", width=5)
 
-        if is_contrarian:
+        if is_contrarian_family:
             table.add_column("Prev", justify="right", width=6)
-            table.add_column("@t0", justify="right", width=6)
+            table.add_column(f"@{entry_t_label}", justify="right", width=6)
         else:
             table.add_column("@t7.5", justify="right", width=6)
             if is_two_stage:
@@ -560,23 +581,23 @@ class TradingDashboard:
             state = self.sampler.get_current_state(asset)
 
             # Get prices at key timepoints
-            price_at_0 = None
+            price_at_entry = None
             price_at_7_5 = None
             price_at_10 = None
             current_price = None
 
             if state and state.samples:
                 for sample in state.samples:
-                    if sample.t_minutes == 0.0:
-                        price_at_0 = sample.pm_yes_price
-                    elif sample.t_minutes == 7.5:
+                    if is_contrarian_family and sample.t_minutes == entry_t_min:
+                        price_at_entry = sample.pm_yes_price
+                    if sample.t_minutes == 7.5:
                         price_at_7_5 = sample.pm_yes_price
                     elif sample.t_minutes == 10.0:
                         price_at_10 = sample.pm_yes_price
                 # Get latest price
                 current_price = state.samples[-1].pm_yes_price
 
-            if is_contrarian:
+            if is_contrarian_family:
                 # Previous window PM@t12.5
                 prev_pm = self.trader._prev_window_pm.get(asset)
                 if prev_pm is not None:
@@ -590,12 +611,12 @@ class TradingDashboard:
                 else:
                     prev_str = "[dim]--[/dim]"
 
-                # Entry price @t0
-                if price_at_0 is not None:
-                    e_color = "green" if price_at_0 >= 0.6 else "red" if price_at_0 <= 0.4 else "white"
-                    t0_str = f"[{e_color}]{price_at_0:.2f}[/{e_color}]"
+                # Entry price at configured time
+                if price_at_entry is not None:
+                    e_color = "green" if price_at_entry >= 0.6 else "red" if price_at_entry <= 0.4 else "white"
+                    entry_str = f"[{e_color}]{price_at_entry:.2f}[/{e_color}]"
                 else:
-                    t0_str = "[dim]--[/dim]"
+                    entry_str = "[dim]--[/dim]"
             else:
                 # Format t=7.5 price
                 if price_at_7_5 is not None:
@@ -629,27 +650,34 @@ class TradingDashboard:
                 direction = pending_signals[asset]["direction"]
                 dir_color = "green" if direction == "bull" else "red"
                 status_str = f"[{dir_color}]PEND[/{dir_color}]"
+            elif last_signal and "no-consensus" in str(last_signal):
+                status_str = "[yellow]NO-CS[/yellow]"
             elif last_signal and "no-confirm" in str(last_signal):
                 status_str = "[yellow]NO-CF[/yellow]"
             elif last_signal and "faded" in str(last_signal):
                 status_str = "[yellow]FADED[/yellow]"
             elif last_signal and "filtered" in str(last_signal):
                 status_str = "[yellow]FILT[/yellow]"
-            elif last_signal and "contrarian" in str(last_signal):
+            elif last_signal and ("contrarian" in str(last_signal) or "consensus" in str(last_signal)):
                 direction = last_signal.split("-")[0]
                 dir_color = "green" if direction == "bull" else "red"
                 status_str = f"[{dir_color}]DONE[/{dir_color}]"
             else:
                 status_str = "[dim]SKIP[/dim]"
 
-            if is_contrarian:
-                table.add_row(asset, prev_str, t0_str, now_str, status_str)
+            if is_contrarian_family:
+                table.add_row(asset, prev_str, entry_str, now_str, status_str)
             elif is_two_stage:
                 table.add_row(asset, t75_str, t10_str, now_str, status_str)
             else:
                 table.add_row(asset, t75_str, now_str, status_str)
 
-        title = "Window Status (Contrarian)" if is_contrarian else "Window Status"
+        if is_consensus:
+            title = "Window Status (Consensus)"
+        elif is_contrarian:
+            title = "Window Status (Contrarian)"
+        else:
+            title = "Window Status"
         return Panel(table, title=title, border_style="white")
 
     def _make_footer(self) -> Panel:
@@ -659,7 +687,18 @@ class TradingDashboard:
 
         content = Text()
 
-        if self.trader.entry_mode == "contrarian":
+        if self.trader.entry_mode == "contrarian_consensus":
+            content.append("Strategy: ", style="dim")
+            content.append("Contrarian+Consensus ", style="magenta bold")
+            content.append(
+                f"Prev>={self.trader.contrarian_prev_thresh} "
+                f"{self.trader.consensus_min_agree}/4agree "
+                f"Bull>={self.trader.contrarian_bull_thresh} "
+                f"Bear<={self.trader.contrarian_bear_thresh} "
+                f"({self.trader.consensus_entry_time}→{self.trader.consensus_exit_time})",
+                style="magenta",
+            )
+        elif self.trader.entry_mode == "contrarian":
             content.append("Strategy: ", style="dim")
             content.append("Contrarian ", style="magenta bold")
             content.append(

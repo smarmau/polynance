@@ -7,6 +7,10 @@
   "contrarian_entry_time": "t0",
   "contrarian_exit_time": "t12.5",
 
+  "consensus_min_agree": 3,
+  "consensus_entry_time": "t5",
+  "consensus_exit_time": "t12.5",
+
   "signal_threshold_bull": 0.70,
   "signal_threshold_bear": 0.30,
   "confirm_threshold_bull": 0.85,

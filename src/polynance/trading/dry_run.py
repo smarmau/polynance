@@ -132,7 +132,12 @@ async def async_main(args, config: TradingConfig):
     logger.info(f"Assets: {config.assets}")
     logger.info(f"Initial Bankroll: ${config.initial_bankroll:,.2f}")
     logger.info(f"Base Bet: ${config.base_bet:.2f}")
-    if config.entry_mode == "contrarian":
+    if config.entry_mode == "contrarian_consensus":
+        logger.info(f"Prev Window Thresh: >= {config.contrarian_prev_thresh}")
+        logger.info(f"Consensus: {config.consensus_min_agree}/4 assets must agree")
+        logger.info(f"Entry: {config.consensus_entry_time}, Exit: {config.consensus_exit_time}")
+        logger.info(f"Bull Confirm: >= {config.contrarian_bull_thresh}, Bear Confirm: <= {config.contrarian_bear_thresh}")
+    elif config.entry_mode == "contrarian":
         logger.info(f"Prev Window Thresh: >= {config.contrarian_prev_thresh}")
         logger.info(f"Entry: {config.contrarian_entry_time}, Exit: {config.contrarian_exit_time}")
         logger.info(f"Bull Confirm: >= {config.contrarian_bull_thresh}, Bear Confirm: <= {config.contrarian_bear_thresh}")

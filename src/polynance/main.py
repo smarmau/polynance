@@ -173,11 +173,25 @@ class Application:
             contrarian_bear_thresh=self.trading_config.get("contrarian_bear_thresh", 0.40),
             contrarian_entry_time=self.trading_config.get("contrarian_entry_time", "t0"),
             contrarian_exit_time=self.trading_config.get("contrarian_exit_time", "t12.5"),
+            consensus_min_agree=self.trading_config.get("consensus_min_agree", 3),
+            consensus_entry_time=self.trading_config.get("consensus_entry_time", "t5"),
+            consensus_exit_time=self.trading_config.get("consensus_exit_time", "t12.5"),
         )
         await self.trader.initialize()
 
         entry_mode = self.trading_config.get("entry_mode", "two_stage")
-        if entry_mode == "contrarian":
+        if entry_mode == "contrarian_consensus":
+            logger.info(
+                f"Trading engine initialized (CONTRARIAN+CONSENSUS): "
+                f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
+                f"Prev thresh={self.trading_config.get('contrarian_prev_thresh', 0.75)}, "
+                f"Min agree={self.trading_config.get('consensus_min_agree', 3)}/4, "
+                f"Entry={self.trading_config.get('consensus_entry_time', 't5')} "
+                f"Exit={self.trading_config.get('consensus_exit_time', 't12.5')}, "
+                f"Bull>={self.trading_config.get('contrarian_bull_thresh', 0.60)} "
+                f"Bear<={self.trading_config.get('contrarian_bear_thresh', 0.40)}"
+            )
+        elif entry_mode == "contrarian":
             logger.info(
                 f"Trading engine initialized (CONTRARIAN): "
                 f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
@@ -215,7 +229,20 @@ class Application:
         try:
             entry_mode = self.trading_config.get("entry_mode", "two_stage")
 
-            if entry_mode == "contrarian":
+            if entry_mode == "contrarian_consensus":
+                # Consensus: entry and exit at consensus-specific times
+                entry_t = self.trader._time_to_minutes.get(
+                    self.trader.consensus_entry_time, 5.0
+                )
+                exit_t = self.trader._time_to_minutes.get(
+                    self.trader.consensus_exit_time, 12.5
+                )
+
+                if sample.t_minutes == entry_t:
+                    await self.trader.on_sample_at_consensus_entry(asset, sample, state)
+                elif sample.t_minutes == exit_t:
+                    await self.trader.on_sample_at_consensus_exit(asset, sample, state)
+            elif entry_mode == "contrarian":
                 # Contrarian: entry and exit at configured sample points
                 entry_t = self.trader._time_to_minutes.get(
                     self.trader.contrarian_entry_time, 0.0

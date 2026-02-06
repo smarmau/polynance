@@ -59,6 +59,11 @@ class SimulatedTrader:
     DEFAULT_CONTRARIAN_ENTRY_TIME = "t0"
     DEFAULT_CONTRARIAN_EXIT_TIME = "t12.5"
 
+    # Consensus defaults
+    DEFAULT_CONSENSUS_MIN_AGREE = 3
+    DEFAULT_CONSENSUS_ENTRY_TIME = "t5"
+    DEFAULT_CONSENSUS_EXIT_TIME = "t12.5"
+
     def __init__(
         self,
         trading_db: TradingDatabase,
@@ -84,6 +89,9 @@ class SimulatedTrader:
         contrarian_bear_thresh: float = DEFAULT_CONTRARIAN_BEAR_THRESH,
         contrarian_entry_time: str = DEFAULT_CONTRARIAN_ENTRY_TIME,
         contrarian_exit_time: str = DEFAULT_CONTRARIAN_EXIT_TIME,
+        consensus_min_agree: int = DEFAULT_CONSENSUS_MIN_AGREE,
+        consensus_entry_time: str = DEFAULT_CONSENSUS_ENTRY_TIME,
+        consensus_exit_time: str = DEFAULT_CONSENSUS_EXIT_TIME,
     ):
         """Initialize the simulated trader.
 
@@ -137,6 +145,11 @@ class SimulatedTrader:
         self.contrarian_entry_time = contrarian_entry_time
         self.contrarian_exit_time = contrarian_exit_time
 
+        # Consensus configuration
+        self.consensus_min_agree = consensus_min_agree
+        self.consensus_entry_time = consensus_entry_time
+        self.consensus_exit_time = consensus_exit_time
+
         # Map time labels to t_minutes values for contrarian
         self._time_to_minutes = {
             "t0": 0.0, "t2.5": 2.5, "t5": 5.0,
@@ -171,6 +184,12 @@ class SimulatedTrader:
         # This is updated each time a window completes
         self._prev_window_pm: Dict[str, float] = {}
 
+        # Consensus: buffer samples at consensus entry time to evaluate cross-asset
+        # Maps window_id -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
+        self._consensus_buffer: Dict[str, Dict[str, dict]] = {}
+        # Track which window_id we've already evaluated consensus for
+        self._consensus_evaluated: set = set()
+
     async def initialize(self):
         """Load or initialize trading state from database."""
         logger.info("Initializing simulated trader...")
@@ -192,10 +211,14 @@ class SimulatedTrader:
         else:
             # Recalculate bet size from win streak (handles sizer changes)
             old_bet = self.state.current_bet_size
-            self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
-                self.state.current_win_streak,
-                self.state.current_bankroll,
-            )
+            if self.entry_mode in ("contrarian", "contrarian_consensus"):
+                # Fixed sizing for contrarian/consensus modes
+                self.state.current_bet_size = self.base_bet
+            else:
+                self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
+                    self.state.current_win_streak,
+                    self.state.current_bankroll,
+                )
             if abs(old_bet - self.state.current_bet_size) > 0.01:
                 logger.info(
                     f"Recalculated bet size: ${old_bet:.2f} -> ${self.state.current_bet_size:.2f} "
@@ -717,11 +740,14 @@ class SimulatedTrader:
                         f"[{asset}] LOSS DETECTED: Pausing for {self.pause_windows_after_loss} windows"
                     )
 
-            # Update bet size
-            self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
-                self.state.current_win_streak,
-                self.state.current_bankroll,
-            )
+            # Update bet size (fixed for contrarian/consensus, dynamic for others)
+            if self.entry_mode in ("contrarian", "contrarian_consensus"):
+                self.state.current_bet_size = self.base_bet
+            else:
+                self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
+                    self.state.current_win_streak,
+                    self.state.current_bankroll,
+                )
 
             # Update drawdown tracking
             self.state.peak_bankroll = max(
@@ -775,6 +801,215 @@ class SimulatedTrader:
         except Exception as e:
             logger.error(f"[{asset}] Error in contrarian exit: {e}", exc_info=True)
 
+    # =========================================================================
+    # Contrarian + Consensus Strategy Methods
+    # =========================================================================
+
+    async def on_sample_at_consensus_entry(self, asset: str, sample, state):
+        """Buffer sample at consensus entry time. Once all assets arrive, evaluate consensus.
+
+        Contrarian+Consensus strategy (two-phase cross-asset filter):
+        Phase 1 - Previous window consensus: Count assets with strong prev pm@t12.5
+                  Need >= min_agree assets with prev_pm >= thresh (strong UP) or <= 1-thresh (strong DOWN)
+        Phase 2 - Current window consensus: Count assets confirming reversal direction
+                  Need >= min_agree assets with current pm confirming the reversal
+        Only trade assets that individually pass Phase 2 confirmation.
+        """
+        try:
+            pm_yes = sample.pm_yes_price
+            if pm_yes is None:
+                logger.debug(f"[{asset}] No pm_yes at consensus entry time")
+                self._last_signals[asset] = None
+                return
+
+            # Buffer this asset's data for the current window
+            window_id = sample.window_id
+            if window_id not in self._consensus_buffer:
+                self._consensus_buffer[window_id] = {}
+
+            self._consensus_buffer[window_id][asset] = {
+                "pm_yes": pm_yes,
+                "sample": sample,
+                "state": state,
+            }
+
+            # Check if all assets have reported for this window
+            expected_assets = set(self.asset_databases.keys())
+            arrived_assets = set(self._consensus_buffer[window_id].keys())
+
+            if arrived_assets >= expected_assets and window_id not in self._consensus_evaluated:
+                # All assets are in — evaluate consensus
+                self._consensus_evaluated.add(window_id)
+                await self._evaluate_consensus(window_id)
+
+                # Clean up old buffers (keep only current window)
+                old_windows = [
+                    wid for wid in self._consensus_buffer
+                    if wid != window_id
+                ]
+                for wid in old_windows:
+                    del self._consensus_buffer[wid]
+                # Clean up old evaluated set
+                self._consensus_evaluated -= set(old_windows)
+
+        except Exception as e:
+            logger.error(f"[{asset}] Error in consensus entry buffer: {e}", exc_info=True)
+
+    async def _evaluate_consensus(self, window_id: str):
+        """Evaluate cross-asset consensus for a window and enter trades.
+
+        Phase 1: Count assets with strong previous window (contrarian setup)
+        Phase 2: Count assets confirming reversal in current window
+        Only trade if both phases pass min_agree threshold.
+        """
+        buffer = self._consensus_buffer.get(window_id, {})
+        if not buffer:
+            return
+
+        min_agree = self.consensus_min_agree
+        thresh = self.contrarian_prev_thresh
+
+        # Phase 1: Count assets with strong previous window
+        prev_strong_up = 0   # prev pm >= thresh (strong UP → expect bear reversal)
+        prev_strong_down = 0  # prev pm <= 1-thresh (strong DOWN → expect bull reversal)
+
+        for asset, data in buffer.items():
+            prev_pm = self._prev_window_pm.get(asset)
+            if prev_pm is None:
+                continue
+            if prev_pm >= thresh:
+                prev_strong_up += 1
+            elif prev_pm <= (1.0 - thresh):
+                prev_strong_down += 1
+
+        # Determine consensus contrarian direction
+        contrarian_dir = None
+        if prev_strong_up >= min_agree:
+            contrarian_dir = "bear"  # Strong UP → expect reversal DOWN
+            logger.info(
+                f"[CONSENSUS] Phase 1 PASS: {prev_strong_up}/{len(buffer)} assets had strong "
+                f"prev UP (pm >= {thresh}) → expect BEAR reversal"
+            )
+        elif prev_strong_down >= min_agree:
+            contrarian_dir = "bull"  # Strong DOWN → expect reversal UP
+            logger.info(
+                f"[CONSENSUS] Phase 1 PASS: {prev_strong_down}/{len(buffer)} assets had strong "
+                f"prev DOWN (pm <= {1.0 - thresh:.2f}) → expect BULL reversal"
+            )
+        else:
+            logger.debug(
+                f"[CONSENSUS] Phase 1 FAIL: strong_up={prev_strong_up}, "
+                f"strong_down={prev_strong_down}, need >= {min_agree}"
+            )
+            for asset in buffer:
+                self._last_signals[asset] = None
+            return
+
+        # Phase 2: Count assets confirming reversal in CURRENT window
+        confirming_assets = []
+        for asset, data in buffer.items():
+            pm_yes = data["pm_yes"]
+            if contrarian_dir == "bear" and pm_yes <= self.contrarian_bear_thresh:
+                confirming_assets.append(asset)
+            elif contrarian_dir == "bull" and pm_yes >= self.contrarian_bull_thresh:
+                confirming_assets.append(asset)
+
+        if len(confirming_assets) < min_agree:
+            logger.info(
+                f"[CONSENSUS] Phase 2 FAIL: only {len(confirming_assets)}/{len(buffer)} assets "
+                f"confirm {contrarian_dir.upper()} reversal (need >= {min_agree}). "
+                f"Confirming: {confirming_assets}"
+            )
+            for asset in buffer:
+                if asset in confirming_assets:
+                    self._last_signals[asset] = f"{contrarian_dir}-no-consensus"
+                else:
+                    self._last_signals[asset] = f"{contrarian_dir}-no-confirm"
+            return
+
+        logger.info(
+            f"[CONSENSUS] Phase 2 PASS: {len(confirming_assets)}/{len(buffer)} assets "
+            f"confirm {contrarian_dir.upper()} reversal → ENTERING TRADES"
+        )
+
+        # Enter trades for all confirming assets
+        for asset in confirming_assets:
+            await self._enter_consensus_trade(
+                asset, contrarian_dir, buffer[asset]
+            )
+
+        # Mark non-confirming assets
+        for asset in buffer:
+            if asset not in confirming_assets:
+                self._last_signals[asset] = f"{contrarian_dir}-no-confirm"
+
+    async def _enter_consensus_trade(
+        self, asset: str, direction: str, data: dict
+    ):
+        """Enter a single consensus trade for an asset."""
+        try:
+            # Skip if already have open position or paused
+            if asset in self.open_trades:
+                logger.debug(f"[{asset}] Already have open position, skipping consensus entry")
+                return
+
+            if self.state.pause_windows_remaining > 0:
+                logger.info(
+                    f"[{asset}] PAUSED: Skipping consensus entry "
+                    f"({self.state.pause_windows_remaining} windows remaining)"
+                )
+                self._last_signals[asset] = None
+                return
+
+            sample = data["sample"]
+            pm_yes = data["pm_yes"]
+
+            self._last_signals[asset] = f"{direction}-consensus"
+
+            # Calculate entry contract price
+            if direction == "bull":
+                entry_price = pm_yes  # buying YES
+            else:
+                entry_price = 1.0 - pm_yes  # buying NO
+
+            # Fixed bet size
+            bet_size = min(
+                self.base_bet,
+                self.state.current_bankroll * self.max_bet_pct,
+            )
+
+            # Create trade
+            trade = SimulatedTrade(
+                window_id=sample.window_id,
+                asset=asset,
+                direction=direction,
+                entry_time=sample.sample_time_utc,
+                entry_price=entry_price,
+                bet_size=bet_size,
+                outcome="pending",
+            )
+
+            # Store in database
+            await self.trading_db.insert_trade(trade)
+            self.open_trades[asset] = trade
+
+            # Save state
+            await self.trading_db.save_state(self.state)
+
+            logger.info(
+                f"[{asset}] OPENED CONSENSUS {direction.upper()} position: "
+                f"entry_contract={entry_price:.3f} (pm_yes={pm_yes:.3f}), "
+                f"bet=${bet_size:.2f}, window={sample.window_id}"
+            )
+
+        except Exception as e:
+            logger.error(f"[{asset}] Error in consensus trade entry: {e}", exc_info=True)
+
+    async def on_sample_at_consensus_exit(self, asset: str, sample, state):
+        """Handle sample at consensus exit time — same P&L logic as contrarian exit."""
+        # Reuse contrarian exit logic (identical early-exit P&L calculation)
+        await self.on_sample_at_contrarian_exit(asset, sample, state)
+
     async def on_window_complete(self, asset: str, window: Window):
         """Handle window completion - resolve open trades and track previous window.
 
@@ -788,9 +1023,9 @@ class SimulatedTrader:
             window: Completed window with outcome
         """
         try:
-            # For contrarian mode, track previous window's pm_yes at t=12.5
+            # For contrarian/consensus modes, track previous window's pm_yes at t=12.5
             # This is needed for the next window's entry decision
-            if self.entry_mode == "contrarian":
+            if self.entry_mode in ("contrarian", "contrarian_consensus"):
                 pm_t12_5 = getattr(window, 'pm_yes_t12_5', None)
                 if pm_t12_5 is not None:
                     self._prev_window_pm[asset] = pm_t12_5
@@ -817,13 +1052,13 @@ class SimulatedTrader:
                             logger.debug(f"[{asset}] Could not get t12.5 from samples: {e}")
 
             # Resolve any open position for this asset (non-contrarian modes)
-            # Contrarian trades are already closed at t=12.5 via on_sample_at_contrarian_exit
+            # Contrarian/consensus trades are already closed at t=12.5
             if asset in self.open_trades:
-                if self.entry_mode == "contrarian":
-                    # Contrarian trade wasn't closed at t=12.5 (missed exit?)
+                if self.entry_mode in ("contrarian", "contrarian_consensus"):
+                    # Contrarian/consensus trade wasn't closed at t=12.5 (missed exit?)
                     # Fall back to binary resolution
                     logger.warning(
-                        f"[{asset}] Contrarian trade still open at window complete! "
+                        f"[{asset}] {self.entry_mode} trade still open at window complete! "
                         f"Resolving at binary outcome as fallback."
                     )
                 await self._resolve_trade(asset, window)
@@ -948,11 +1183,14 @@ class SimulatedTrader:
                 )
 
         # Update bet size for next trade based on new win streak
-        # SlowGrowthSizer uses win streak count, not previous bet
-        self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
-            self.state.current_win_streak,
-            self.state.current_bankroll,
-        )
+        if self.entry_mode in ("contrarian", "contrarian_consensus"):
+            self.state.current_bet_size = self.base_bet
+        else:
+            # SlowGrowthSizer uses win streak count, not previous bet
+            self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
+                self.state.current_win_streak,
+                self.state.current_bankroll,
+            )
 
         # Update drawdown tracking
         self.state.peak_bankroll = max(
@@ -1098,13 +1336,19 @@ class SimulatedTrader:
             "min_trajectory": self.min_trajectory,
             "sizer": self.sizer.get_config(),
         }
-        if self.entry_mode == "contrarian":
+        if self.entry_mode in ("contrarian", "contrarian_consensus"):
             config.update({
                 "contrarian_prev_thresh": self.contrarian_prev_thresh,
                 "contrarian_bull_thresh": self.contrarian_bull_thresh,
                 "contrarian_bear_thresh": self.contrarian_bear_thresh,
                 "contrarian_entry_time": self.contrarian_entry_time,
                 "contrarian_exit_time": self.contrarian_exit_time,
+            })
+        if self.entry_mode == "contrarian_consensus":
+            config.update({
+                "consensus_min_agree": self.consensus_min_agree,
+                "consensus_entry_time": self.consensus_entry_time,
+                "consensus_exit_time": self.consensus_exit_time,
             })
         return config
 
