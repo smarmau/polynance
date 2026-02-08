@@ -64,6 +64,24 @@ class SimulatedTrader:
     DEFAULT_CONSENSUS_ENTRY_TIME = "t5"
     DEFAULT_CONSENSUS_EXIT_TIME = "t12.5"
 
+    # Accel_dbl defaults
+    DEFAULT_ACCEL_NEUTRAL_BAND = 0.15
+    DEFAULT_ACCEL_PREV_THRESH = 0.75
+    DEFAULT_ACCEL_BULL_THRESH = 0.55
+    DEFAULT_ACCEL_BEAR_THRESH = 0.45
+    DEFAULT_ACCEL_ENTRY_TIME = "t5"
+    DEFAULT_ACCEL_EXIT_TIME = "t12.5"
+
+    # Combo_dbl defaults
+    DEFAULT_COMBO_PREV_THRESH = 0.75
+    DEFAULT_COMBO_BULL_THRESH = 0.55
+    DEFAULT_COMBO_BEAR_THRESH = 0.45
+    DEFAULT_COMBO_ENTRY_TIME = "t5"
+    DEFAULT_COMBO_EXIT_TIME = "t12.5"
+    DEFAULT_COMBO_STOP_TIME = "t7.5"
+    DEFAULT_COMBO_STOP_DELTA = 0.10
+    DEFAULT_COMBO_XASSET_MIN = 2
+
     def __init__(
         self,
         trading_db: TradingDatabase,
@@ -92,6 +110,20 @@ class SimulatedTrader:
         consensus_min_agree: int = DEFAULT_CONSENSUS_MIN_AGREE,
         consensus_entry_time: str = DEFAULT_CONSENSUS_ENTRY_TIME,
         consensus_exit_time: str = DEFAULT_CONSENSUS_EXIT_TIME,
+        accel_neutral_band: float = DEFAULT_ACCEL_NEUTRAL_BAND,
+        accel_prev_thresh: float = DEFAULT_ACCEL_PREV_THRESH,
+        accel_bull_thresh: float = DEFAULT_ACCEL_BULL_THRESH,
+        accel_bear_thresh: float = DEFAULT_ACCEL_BEAR_THRESH,
+        accel_entry_time: str = DEFAULT_ACCEL_ENTRY_TIME,
+        accel_exit_time: str = DEFAULT_ACCEL_EXIT_TIME,
+        combo_prev_thresh: float = DEFAULT_COMBO_PREV_THRESH,
+        combo_bull_thresh: float = DEFAULT_COMBO_BULL_THRESH,
+        combo_bear_thresh: float = DEFAULT_COMBO_BEAR_THRESH,
+        combo_entry_time: str = DEFAULT_COMBO_ENTRY_TIME,
+        combo_exit_time: str = DEFAULT_COMBO_EXIT_TIME,
+        combo_stop_time: str = DEFAULT_COMBO_STOP_TIME,
+        combo_stop_delta: float = DEFAULT_COMBO_STOP_DELTA,
+        combo_xasset_min: int = DEFAULT_COMBO_XASSET_MIN,
     ):
         """Initialize the simulated trader.
 
@@ -150,6 +182,24 @@ class SimulatedTrader:
         self.consensus_entry_time = consensus_entry_time
         self.consensus_exit_time = consensus_exit_time
 
+        # Accel_dbl configuration
+        self.accel_neutral_band = accel_neutral_band
+        self.accel_prev_thresh = accel_prev_thresh
+        self.accel_bull_thresh = accel_bull_thresh
+        self.accel_bear_thresh = accel_bear_thresh
+        self.accel_entry_time = accel_entry_time
+        self.accel_exit_time = accel_exit_time
+
+        # Combo_dbl configuration
+        self.combo_prev_thresh = combo_prev_thresh
+        self.combo_bull_thresh = combo_bull_thresh
+        self.combo_bear_thresh = combo_bear_thresh
+        self.combo_entry_time = combo_entry_time
+        self.combo_exit_time = combo_exit_time
+        self.combo_stop_time = combo_stop_time
+        self.combo_stop_delta = combo_stop_delta
+        self.combo_xasset_min = combo_xasset_min
+
         # Map time labels to t_minutes values for contrarian
         self._time_to_minutes = {
             "t0": 0.0, "t2.5": 2.5, "t5": 5.0,
@@ -184,12 +234,29 @@ class SimulatedTrader:
         # This is updated each time a window completes
         self._prev_window_pm: Dict[str, float] = {}
 
+        # Double contrarian: track the window BEFORE prev (prev2)
+        # Updated by shifting _prev_window_pm → _prev2_window_pm on window complete
+        self._prev2_window_pm: Dict[str, float] = {}
+
         # Consensus: buffer samples at consensus entry time to evaluate cross-asset
         # Maps time_key (e.g. "20260206_0445") -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
         # Uses time-based key (not asset-specific window_id) so all 4 assets group together
         self._consensus_buffer: Dict[str, Dict[str, dict]] = {}
         # Track which time_keys we've already evaluated consensus for
         self._consensus_evaluated: set = set()
+
+        # Accel_dbl: store t0 pm_yes for acceleration check
+        # Maps asset -> pm_yes at t0 of current window
+        self._accel_t0_pm: Dict[str, float] = {}
+
+        # Combo_dbl: buffer for cross-asset evaluation at entry time
+        # Maps time_key -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
+        self._combo_buffer: Dict[str, Dict[str, dict]] = {}
+        self._combo_evaluated: set = set()
+
+        # Combo_dbl: store entry pm_yes for stop-loss delta check
+        # Maps asset -> pm_yes at entry time
+        self._combo_entry_pm: Dict[str, float] = {}
 
     async def initialize(self):
         """Load or initialize trading state from database."""
@@ -212,8 +279,8 @@ class SimulatedTrader:
         else:
             # Recalculate bet size from win streak (handles sizer changes)
             old_bet = self.state.current_bet_size
-            if self.entry_mode in ("contrarian", "contrarian_consensus"):
-                # Fixed sizing for contrarian/consensus modes
+            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
+                # Fixed sizing for contrarian-family modes
                 self.state.current_bet_size = self.base_bet
             else:
                 self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
@@ -741,8 +808,8 @@ class SimulatedTrader:
                         f"[{asset}] LOSS DETECTED: Pausing for {self.pause_windows_after_loss} windows"
                     )
 
-            # Update bet size (fixed for contrarian/consensus, dynamic for others)
-            if self.entry_mode in ("contrarian", "contrarian_consensus"):
+            # Update bet size (fixed for contrarian-family, dynamic for others)
+            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
                 self.state.current_bet_size = self.base_bet
             else:
                 self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
@@ -1032,6 +1099,351 @@ class SimulatedTrader:
         # Reuse contrarian exit logic (identical early-exit P&L calculation)
         await self.on_sample_at_contrarian_exit(asset, sample, state)
 
+    # =========================================================================
+    # ACCEL_DBL Strategy Methods
+    # Double contrarian + t0 near neutral (acceleration filter)
+    # =========================================================================
+
+    async def on_sample_at_accel_t0(self, asset: str, sample, state):
+        """Record t0 pm_yes for acceleration filter check."""
+        pm_yes = sample.pm_yes_price
+        if pm_yes is not None:
+            self._accel_t0_pm[asset] = pm_yes
+        else:
+            self._accel_t0_pm.pop(asset, None)
+
+    async def on_sample_at_accel_entry(self, asset: str, sample, state):
+        """Handle ACCEL_DBL entry at configured time (default t5).
+
+        Requirements:
+        1. prev2 AND prev1 must both be strong in same direction (double contrarian)
+        2. t0 pm_yes must be near 0.50 (within accel_neutral_band)
+        3. Current pm_yes must confirm reversal direction
+        """
+        try:
+            if asset in self.open_trades:
+                return
+
+            if self.state.pause_windows_remaining > 0:
+                self._last_signals[asset] = None
+                return
+
+            pm_yes = sample.pm_yes_price
+            if pm_yes is None:
+                self._last_signals[asset] = None
+                return
+
+            thresh = self.accel_prev_thresh
+
+            # Check double contrarian: prev2 AND prev1 both strong same direction
+            prev2 = self._prev2_window_pm.get(asset)
+            prev1 = self._prev_window_pm.get(asset)
+
+            if prev2 is None or prev1 is None:
+                self._last_signals[asset] = None
+                return
+
+            # Determine direction from double strong prev
+            direction = None
+            if prev2 >= thresh and prev1 >= thresh:
+                # Two consecutive strong UP → expect reversal DOWN → BEAR
+                direction = "bear"
+            elif prev2 <= (1.0 - thresh) and prev1 <= (1.0 - thresh):
+                # Two consecutive strong DOWN → expect reversal UP → BULL
+                direction = "bull"
+            else:
+                self._last_signals[asset] = None
+                return
+
+            # Check acceleration filter: t0 must be near neutral (0.50)
+            t0_pm = self._accel_t0_pm.get(asset)
+            if t0_pm is None:
+                self._last_signals[asset] = "accel-no-t0"
+                return
+
+            if abs(t0_pm - 0.50) > self.accel_neutral_band:
+                logger.debug(
+                    f"[{asset}] ACCEL_DBL: t0={t0_pm:.3f} not near neutral "
+                    f"(|{t0_pm:.3f} - 0.50| = {abs(t0_pm - 0.50):.3f} > {self.accel_neutral_band})"
+                )
+                self._last_signals[asset] = "accel-filtered"
+                return
+
+            # Check current pm confirms reversal
+            if direction == "bear" and pm_yes > self.accel_bear_thresh:
+                self._last_signals[asset] = "bear-no-confirm"
+                return
+            elif direction == "bull" and pm_yes < self.accel_bull_thresh:
+                self._last_signals[asset] = "bull-no-confirm"
+                return
+
+            # All checks passed — enter trade
+            self._last_signals[asset] = f"{direction}-accel"
+
+            if direction == "bull":
+                entry_price = pm_yes
+            else:
+                entry_price = 1.0 - pm_yes
+
+            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+
+            trade = SimulatedTrade(
+                window_id=sample.window_id,
+                asset=asset,
+                direction=direction,
+                entry_time=sample.sample_time_utc,
+                entry_price=entry_price,
+                bet_size=bet_size,
+                outcome="pending",
+            )
+
+            await self.trading_db.insert_trade(trade)
+            self.open_trades[asset] = trade
+            await self.trading_db.save_state(self.state)
+
+            logger.info(
+                f"[{asset}] ACCEL_DBL {direction.upper()}: "
+                f"prev2={prev2:.3f} prev1={prev1:.3f} t0={t0_pm:.3f} "
+                f"entry={entry_price:.3f} (pm={pm_yes:.3f}), "
+                f"bet=${bet_size:.2f}, window={sample.window_id}"
+            )
+
+        except Exception as e:
+            logger.error(f"[{asset}] Error in accel_dbl entry: {e}", exc_info=True)
+
+    async def on_sample_at_accel_exit(self, asset: str, sample, state):
+        """Handle ACCEL_DBL exit — same early-exit P&L as contrarian."""
+        await self.on_sample_at_contrarian_exit(asset, sample, state)
+
+    # =========================================================================
+    # COMBO_DBL Strategy Methods
+    # Double contrarian + stop-loss at t7.5 + cross-asset filter
+    # =========================================================================
+
+    async def on_sample_at_combo_entry(self, asset: str, sample, state):
+        """Buffer sample at combo entry time. Once all assets arrive, evaluate.
+
+        Like consensus but checks for double-strong prev windows across assets.
+        """
+        try:
+            pm_yes = sample.pm_yes_price
+            time_key = "_".join(sample.window_id.split("_")[1:])
+
+            if time_key not in self._combo_buffer:
+                self._combo_buffer[time_key] = {}
+
+            self._combo_buffer[time_key][asset] = {
+                "pm_yes": pm_yes,
+                "sample": sample,
+                "state": state,
+            }
+
+            if pm_yes is None:
+                self._last_signals[asset] = None
+
+            expected_assets = set(self.asset_databases.keys())
+            arrived_assets = set(self._combo_buffer[time_key].keys())
+
+            if arrived_assets >= expected_assets and time_key not in self._combo_evaluated:
+                self._combo_evaluated.add(time_key)
+                await self._evaluate_combo(time_key)
+
+                # Clean up old buffers
+                old_keys = [k for k in self._combo_buffer if k != time_key]
+                for k in old_keys:
+                    del self._combo_buffer[k]
+                self._combo_evaluated -= set(old_keys)
+
+        except Exception as e:
+            logger.error(f"[{asset}] Error in combo entry buffer: {e}", exc_info=True)
+
+    async def _evaluate_combo(self, time_key: str):
+        """Evaluate combo_dbl cross-asset filter and enter trades.
+
+        Requirements:
+        1. This asset has double-strong prev (prev2 AND prev1 both strong same direction)
+        2. At least combo_xasset_min OTHER assets also have double-strong prev same direction
+        3. Current pm confirms reversal
+        """
+        buffer = self._combo_buffer.get(time_key, {})
+        if not buffer:
+            return
+
+        thresh = self.combo_prev_thresh
+
+        # Count assets with double-strong prev in each direction
+        dbl_strong_up = []   # assets with prev2 >= thresh AND prev1 >= thresh
+        dbl_strong_down = []  # assets with prev2 <= 1-thresh AND prev1 <= 1-thresh
+
+        for asset in buffer:
+            prev2 = self._prev2_window_pm.get(asset)
+            prev1 = self._prev_window_pm.get(asset)
+            if prev2 is None or prev1 is None:
+                continue
+            if prev2 >= thresh and prev1 >= thresh:
+                dbl_strong_up.append(asset)
+            elif prev2 <= (1.0 - thresh) and prev1 <= (1.0 - thresh):
+                dbl_strong_down.append(asset)
+
+        # For each asset that qualifies, check if enough OTHER assets also qualify
+        # Try bear direction (from double strong UP)
+        for asset in list(dbl_strong_up):
+            others_count = len(dbl_strong_up) - 1  # exclude self
+            if others_count < self.combo_xasset_min:
+                logger.debug(
+                    f"[{asset}] COMBO: only {others_count} other assets double-strong UP "
+                    f"(need {self.combo_xasset_min})"
+                )
+                self._last_signals[asset] = "combo-no-xasset"
+                continue
+
+            data = buffer[asset]
+            pm_yes = data["pm_yes"]
+            if pm_yes is None:
+                self._last_signals[asset] = None
+                continue
+
+            if pm_yes <= self.combo_bear_thresh:
+                await self._enter_combo_trade(asset, "bear", data)
+            else:
+                self._last_signals[asset] = "bear-no-confirm"
+
+        # Try bull direction (from double strong DOWN)
+        for asset in list(dbl_strong_down):
+            others_count = len(dbl_strong_down) - 1
+            if others_count < self.combo_xasset_min:
+                logger.debug(
+                    f"[{asset}] COMBO: only {others_count} other assets double-strong DOWN "
+                    f"(need {self.combo_xasset_min})"
+                )
+                self._last_signals[asset] = "combo-no-xasset"
+                continue
+
+            data = buffer[asset]
+            pm_yes = data["pm_yes"]
+            if pm_yes is None:
+                self._last_signals[asset] = None
+                continue
+
+            if pm_yes >= self.combo_bull_thresh:
+                await self._enter_combo_trade(asset, "bull", data)
+            else:
+                self._last_signals[asset] = "bull-no-confirm"
+
+        # Mark assets with no double-strong prev
+        all_qualifying = set(dbl_strong_up) | set(dbl_strong_down)
+        for asset in buffer:
+            if asset not in all_qualifying:
+                if self._last_signals.get(asset) is None:
+                    self._last_signals[asset] = None
+
+    async def _enter_combo_trade(self, asset: str, direction: str, data: dict):
+        """Enter a single combo_dbl trade."""
+        try:
+            if asset in self.open_trades:
+                return
+
+            if self.state.pause_windows_remaining > 0:
+                self._last_signals[asset] = None
+                return
+
+            sample = data["sample"]
+            pm_yes = data["pm_yes"]
+
+            self._last_signals[asset] = f"{direction}-combo"
+
+            if direction == "bull":
+                entry_price = pm_yes
+            else:
+                entry_price = 1.0 - pm_yes
+
+            # Store entry pm_yes for stop-loss delta check
+            self._combo_entry_pm[asset] = pm_yes
+
+            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+
+            trade = SimulatedTrade(
+                window_id=sample.window_id,
+                asset=asset,
+                direction=direction,
+                entry_time=sample.sample_time_utc,
+                entry_price=entry_price,
+                bet_size=bet_size,
+                outcome="pending",
+            )
+
+            await self.trading_db.insert_trade(trade)
+            self.open_trades[asset] = trade
+            await self.trading_db.save_state(self.state)
+
+            prev2 = self._prev2_window_pm.get(asset, 0)
+            prev1 = self._prev_window_pm.get(asset, 0)
+            logger.info(
+                f"[{asset}] COMBO_DBL {direction.upper()}: "
+                f"prev2={prev2:.3f} prev1={prev1:.3f} "
+                f"entry={entry_price:.3f} (pm={pm_yes:.3f}), "
+                f"bet=${bet_size:.2f}, stop_delta={self.combo_stop_delta}, "
+                f"window={sample.window_id}"
+            )
+
+        except Exception as e:
+            logger.error(f"[{asset}] Error in combo trade entry: {e}", exc_info=True)
+
+    async def on_sample_at_combo_stop(self, asset: str, sample, state):
+        """Handle combo_dbl stop-loss check at t7.5.
+
+        If position has moved against us by combo_stop_delta, exit early.
+        Otherwise, hold until normal exit time.
+        """
+        try:
+            if asset not in self.open_trades:
+                return
+
+            trade = self.open_trades[asset]
+            pm_yes = sample.pm_yes_price
+            if pm_yes is None:
+                return
+
+            entry_pm = self._combo_entry_pm.get(asset)
+            if entry_pm is None:
+                return
+
+            # Check if position has moved against us
+            should_stop = False
+            if trade.direction == "bull":
+                # Bull position: bad if pm dropped (market says less likely UP)
+                delta = entry_pm - pm_yes
+                if delta >= self.combo_stop_delta:
+                    should_stop = True
+                    logger.info(
+                        f"[{asset}] COMBO STOP-LOSS: BULL entry_pm={entry_pm:.3f} "
+                        f"now={pm_yes:.3f}, delta={delta:.3f} >= {self.combo_stop_delta}"
+                    )
+            else:
+                # Bear position: bad if pm rose (market says more likely UP)
+                delta = pm_yes - entry_pm
+                if delta >= self.combo_stop_delta:
+                    should_stop = True
+                    logger.info(
+                        f"[{asset}] COMBO STOP-LOSS: BEAR entry_pm={entry_pm:.3f} "
+                        f"now={pm_yes:.3f}, delta={delta:.3f} >= {self.combo_stop_delta}"
+                    )
+
+            if should_stop:
+                # Exit early at t7.5 using contrarian exit logic
+                await self.on_sample_at_contrarian_exit(asset, sample, state)
+                # Clean up entry pm tracker
+                self._combo_entry_pm.pop(asset, None)
+
+        except Exception as e:
+            logger.error(f"[{asset}] Error in combo stop-loss: {e}", exc_info=True)
+
+    async def on_sample_at_combo_exit(self, asset: str, sample, state):
+        """Handle combo_dbl normal exit — same as contrarian exit."""
+        if asset in self.open_trades:
+            await self.on_sample_at_contrarian_exit(asset, sample, state)
+            self._combo_entry_pm.pop(asset, None)
+
     async def on_window_complete(self, asset: str, window: Window):
         """Handle window completion - resolve open trades and track previous window.
 
@@ -1045,16 +1457,12 @@ class SimulatedTrader:
             window: Completed window with outcome
         """
         try:
-            # For contrarian/consensus modes, track previous window's pm_yes at t=12.5
+            # For contrarian-family modes, track previous window's pm_yes at t=12.5
             # This is needed for the next window's entry decision
-            if self.entry_mode in ("contrarian", "contrarian_consensus"):
+            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
                 pm_t12_5 = getattr(window, 'pm_yes_t12_5', None)
-                if pm_t12_5 is not None:
-                    self._prev_window_pm[asset] = pm_t12_5
-                    logger.debug(
-                        f"[{asset}] Contrarian: stored prev window pm@t12.5={pm_t12_5:.3f}"
-                    )
-                else:
+
+                if pm_t12_5 is None:
                     # Try to get from the asset database samples
                     if asset in self.asset_databases:
                         try:
@@ -1064,20 +1472,26 @@ class SimulatedTrader:
                             for s in samples:
                                 if hasattr(s, 't_minutes') and s.t_minutes == 12.5:
                                     if s.pm_yes_price is not None:
-                                        self._prev_window_pm[asset] = s.pm_yes_price
-                                        logger.debug(
-                                            f"[{asset}] Contrarian: stored prev pm@t12.5="
-                                            f"{s.pm_yes_price:.3f} (from samples)"
-                                        )
+                                        pm_t12_5 = s.pm_yes_price
                                     break
                         except Exception as e:
                             logger.debug(f"[{asset}] Could not get t12.5 from samples: {e}")
 
+                if pm_t12_5 is not None:
+                    # Shift: current prev → prev2, then store new prev
+                    if asset in self._prev_window_pm:
+                        self._prev2_window_pm[asset] = self._prev_window_pm[asset]
+                    self._prev_window_pm[asset] = pm_t12_5
+                    logger.debug(
+                        f"[{asset}] Stored prev window pm@t12.5={pm_t12_5:.3f}"
+                        f" (prev2={self._prev2_window_pm.get(asset, 'N/A')})"
+                    )
+
             # Resolve any open position for this asset (non-contrarian modes)
-            # Contrarian/consensus trades are already closed at t=12.5
+            # Contrarian-family trades are already closed at exit time
             if asset in self.open_trades:
-                if self.entry_mode in ("contrarian", "contrarian_consensus"):
-                    # Contrarian/consensus trade wasn't closed at t=12.5 (missed exit?)
+                if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
+                    # Trade wasn't closed at exit time (missed exit?)
                     # Fall back to binary resolution
                     logger.warning(
                         f"[{asset}] {self.entry_mode} trade still open at window complete! "
@@ -1205,7 +1619,7 @@ class SimulatedTrader:
                 )
 
         # Update bet size for next trade based on new win streak
-        if self.entry_mode in ("contrarian", "contrarian_consensus"):
+        if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
             self.state.current_bet_size = self.base_bet
         else:
             # SlowGrowthSizer uses win streak count, not previous bet
@@ -1371,6 +1785,26 @@ class SimulatedTrader:
                 "consensus_min_agree": self.consensus_min_agree,
                 "consensus_entry_time": self.consensus_entry_time,
                 "consensus_exit_time": self.consensus_exit_time,
+            })
+        if self.entry_mode == "accel_dbl":
+            config.update({
+                "accel_neutral_band": self.accel_neutral_band,
+                "accel_prev_thresh": self.accel_prev_thresh,
+                "accel_bull_thresh": self.accel_bull_thresh,
+                "accel_bear_thresh": self.accel_bear_thresh,
+                "accel_entry_time": self.accel_entry_time,
+                "accel_exit_time": self.accel_exit_time,
+            })
+        if self.entry_mode == "combo_dbl":
+            config.update({
+                "combo_prev_thresh": self.combo_prev_thresh,
+                "combo_bull_thresh": self.combo_bull_thresh,
+                "combo_bear_thresh": self.combo_bear_thresh,
+                "combo_entry_time": self.combo_entry_time,
+                "combo_exit_time": self.combo_exit_time,
+                "combo_stop_time": self.combo_stop_time,
+                "combo_stop_delta": self.combo_stop_delta,
+                "combo_xasset_min": self.combo_xasset_min,
             })
         return config
 

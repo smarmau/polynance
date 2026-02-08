@@ -132,7 +132,18 @@ async def async_main(args, config: TradingConfig):
     logger.info(f"Assets: {config.assets}")
     logger.info(f"Initial Bankroll: ${config.initial_bankroll:,.2f}")
     logger.info(f"Base Bet: ${config.base_bet:.2f}")
-    if config.entry_mode == "contrarian_consensus":
+    if config.entry_mode == "accel_dbl":
+        logger.info(f"Prev Window Thresh: >= {config.accel_prev_thresh} (double required)")
+        logger.info(f"Neutral Band: t0 within {config.accel_neutral_band} of 0.50")
+        logger.info(f"Entry: {config.accel_entry_time}, Exit: {config.accel_exit_time}")
+        logger.info(f"Bull Confirm: >= {config.accel_bull_thresh}, Bear Confirm: <= {config.accel_bear_thresh}")
+    elif config.entry_mode == "combo_dbl":
+        logger.info(f"Prev Window Thresh: >= {config.combo_prev_thresh} (double required)")
+        logger.info(f"Cross-Asset: >= {config.combo_xasset_min} other assets double-strong")
+        logger.info(f"Stop-Loss: delta >= {config.combo_stop_delta} at {config.combo_stop_time}")
+        logger.info(f"Entry: {config.combo_entry_time}, Exit: {config.combo_exit_time}")
+        logger.info(f"Bull Confirm: >= {config.combo_bull_thresh}, Bear Confirm: <= {config.combo_bear_thresh}")
+    elif config.entry_mode == "contrarian_consensus":
         logger.info(f"Prev Window Thresh: >= {config.contrarian_prev_thresh}")
         logger.info(f"Consensus: {config.consensus_min_agree}/4 assets must agree")
         logger.info(f"Entry: {config.consensus_entry_time}, Exit: {config.consensus_exit_time}")

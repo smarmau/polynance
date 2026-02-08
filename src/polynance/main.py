@@ -176,11 +176,49 @@ class Application:
             consensus_min_agree=self.trading_config.get("consensus_min_agree", 3),
             consensus_entry_time=self.trading_config.get("consensus_entry_time", "t5"),
             consensus_exit_time=self.trading_config.get("consensus_exit_time", "t12.5"),
+            accel_neutral_band=self.trading_config.get("accel_neutral_band", 0.15),
+            accel_prev_thresh=self.trading_config.get("accel_prev_thresh", 0.75),
+            accel_bull_thresh=self.trading_config.get("accel_bull_thresh", 0.55),
+            accel_bear_thresh=self.trading_config.get("accel_bear_thresh", 0.45),
+            accel_entry_time=self.trading_config.get("accel_entry_time", "t5"),
+            accel_exit_time=self.trading_config.get("accel_exit_time", "t12.5"),
+            combo_prev_thresh=self.trading_config.get("combo_prev_thresh", 0.75),
+            combo_bull_thresh=self.trading_config.get("combo_bull_thresh", 0.55),
+            combo_bear_thresh=self.trading_config.get("combo_bear_thresh", 0.45),
+            combo_entry_time=self.trading_config.get("combo_entry_time", "t5"),
+            combo_exit_time=self.trading_config.get("combo_exit_time", "t12.5"),
+            combo_stop_time=self.trading_config.get("combo_stop_time", "t7.5"),
+            combo_stop_delta=self.trading_config.get("combo_stop_delta", 0.10),
+            combo_xasset_min=self.trading_config.get("combo_xasset_min", 2),
         )
         await self.trader.initialize()
 
         entry_mode = self.trading_config.get("entry_mode", "two_stage")
-        if entry_mode == "contrarian_consensus":
+        if entry_mode == "accel_dbl":
+            logger.info(
+                f"Trading engine initialized (ACCEL_DBL): "
+                f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
+                f"Prev thresh={self.trading_config.get('accel_prev_thresh', 0.75)}, "
+                f"Neutral band={self.trading_config.get('accel_neutral_band', 0.15)}, "
+                f"Entry={self.trading_config.get('accel_entry_time', 't5')} "
+                f"Exit={self.trading_config.get('accel_exit_time', 't12.5')}, "
+                f"Bull>={self.trading_config.get('accel_bull_thresh', 0.55)} "
+                f"Bear<={self.trading_config.get('accel_bear_thresh', 0.45)}"
+            )
+        elif entry_mode == "combo_dbl":
+            logger.info(
+                f"Trading engine initialized (COMBO_DBL): "
+                f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
+                f"Prev thresh={self.trading_config.get('combo_prev_thresh', 0.75)}, "
+                f"Entry={self.trading_config.get('combo_entry_time', 't5')} "
+                f"Exit={self.trading_config.get('combo_exit_time', 't12.5')}, "
+                f"Stop={self.trading_config.get('combo_stop_time', 't7.5')} "
+                f"delta={self.trading_config.get('combo_stop_delta', 0.10)}, "
+                f"XAsset min={self.trading_config.get('combo_xasset_min', 2)}, "
+                f"Bull>={self.trading_config.get('combo_bull_thresh', 0.55)} "
+                f"Bear<={self.trading_config.get('combo_bear_thresh', 0.45)}"
+            )
+        elif entry_mode == "contrarian_consensus":
             logger.info(
                 f"Trading engine initialized (CONTRARIAN+CONSENSUS): "
                 f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
@@ -229,7 +267,30 @@ class Application:
         try:
             entry_mode = self.trading_config.get("entry_mode", "two_stage")
 
-            if entry_mode == "contrarian_consensus":
+            if entry_mode == "accel_dbl":
+                # ACCEL_DBL: t0 for acceleration check, entry at configured time, exit at configured time
+                entry_t = self.trader._time_to_minutes.get(self.trader.accel_entry_time, 5.0)
+                exit_t = self.trader._time_to_minutes.get(self.trader.accel_exit_time, 12.5)
+
+                if sample.t_minutes == 0.0:
+                    await self.trader.on_sample_at_accel_t0(asset, sample, state)
+                elif sample.t_minutes == entry_t:
+                    await self.trader.on_sample_at_accel_entry(asset, sample, state)
+                elif sample.t_minutes == exit_t:
+                    await self.trader.on_sample_at_accel_exit(asset, sample, state)
+            elif entry_mode == "combo_dbl":
+                # COMBO_DBL: entry at configured time, stop-loss check, exit at configured time
+                entry_t = self.trader._time_to_minutes.get(self.trader.combo_entry_time, 5.0)
+                stop_t = self.trader._time_to_minutes.get(self.trader.combo_stop_time, 7.5)
+                exit_t = self.trader._time_to_minutes.get(self.trader.combo_exit_time, 12.5)
+
+                if sample.t_minutes == entry_t:
+                    await self.trader.on_sample_at_combo_entry(asset, sample, state)
+                elif sample.t_minutes == stop_t:
+                    await self.trader.on_sample_at_combo_stop(asset, sample, state)
+                elif sample.t_minutes == exit_t:
+                    await self.trader.on_sample_at_combo_exit(asset, sample, state)
+            elif entry_mode == "contrarian_consensus":
                 # Consensus: entry and exit at consensus-specific times
                 entry_t = self.trader._time_to_minutes.get(
                     self.trader.consensus_entry_time, 5.0

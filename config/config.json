@@ -11,6 +11,22 @@
   "consensus_entry_time": "t5",
   "consensus_exit_time": "t12.5",
 
+  "accel_neutral_band": 0.15,
+  "accel_prev_thresh": 0.75,
+  "accel_bull_thresh": 0.55,
+  "accel_bear_thresh": 0.45,
+  "accel_entry_time": "t5",
+  "accel_exit_time": "t12.5",
+
+  "combo_prev_thresh": 0.75,
+  "combo_bull_thresh": 0.55,
+  "combo_bear_thresh": 0.45,
+  "combo_entry_time": "t5",
+  "combo_exit_time": "t12.5",
+  "combo_stop_time": "t7.5",
+  "combo_stop_delta": 0.10,
+  "combo_xasset_min": 2,
+
   "signal_threshold_bull": 0.70,
   "signal_threshold_bear": 0.30,
   "confirm_threshold_bull": 0.85,
