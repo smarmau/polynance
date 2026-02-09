@@ -98,7 +98,8 @@ CREATE INDEX IF NOT EXISTS idx_samples_time ON samples(sample_time_utc);
 CREATE INDEX IF NOT EXISTS idx_samples_asset ON samples(asset);
 CREATE INDEX IF NOT EXISTS idx_windows_asset ON windows(asset);
 CREATE INDEX IF NOT EXISTS idx_windows_time ON windows(window_start_utc);
-CREATE INDEX IF NOT EXISTS idx_windows_time_key ON windows(window_time);
+-- Note: idx_windows_time_key on window_time is created by _run_migrations()
+-- after ensuring the column exists (for pre-migration databases)
 """
 
 
