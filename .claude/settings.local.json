@@ -26,7 +26,13 @@
       "Bash(git push)",
       "Bash(ssh:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.polymarket.com)",
+      "WebFetch(domain:www.pmxt.dev)",
+      "Bash(for db in btc eth sol xrp)",
+      "Bash(do)",
+      "Bash(echo:*)"
     ]
   }
 }

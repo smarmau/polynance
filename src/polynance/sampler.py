@@ -93,6 +93,10 @@ class Sampler:
         for asset in assets:
             self.states[asset] = AssetState(asset=asset)
 
+        # Track previous window pm_yes@t12.5 per asset for cross-window refs
+        self._prev_pm_t12_5: Dict[str, Optional[float]] = {a: None for a in assets}
+        self._prev2_pm_t12_5: Dict[str, Optional[float]] = {a: None for a in assets}
+
         # Running flag
         self._running = False
 
@@ -399,6 +403,26 @@ class Sampler:
         if pm_yes_t5 is not None and pm_yes_t10 is not None:
             pm_momentum_5_to_10 = pm_yes_t10 - pm_yes_t5
 
+        # Cross-window references
+        prev_pm = self._prev_pm_t12_5.get(asset)
+        prev2_pm = self._prev2_pm_t12_5.get(asset)
+
+        # Window time key (time portion without asset prefix, for cross-asset queries)
+        window_time = "_".join(state.current_window_id.split("_")[1:])
+
+        # Volatility regime classification based on spot_range_bps
+        # Thresholds: low <15, normal 15-40, high 40-80, extreme >80
+        volatility_regime = None
+        if spot_range_bps is not None:
+            if spot_range_bps < 15:
+                volatility_regime = "low"
+            elif spot_range_bps < 40:
+                volatility_regime = "normal"
+            elif spot_range_bps < 80:
+                volatility_regime = "high"
+            else:
+                volatility_regime = "extreme"
+
         # Create window record
         window = Window(
             window_id=state.current_window_id,
@@ -424,9 +448,17 @@ class Sampler:
             pm_spread_t5=pm_spread_t5,
             pm_price_momentum_0_to_5=pm_momentum_0_to_5,
             pm_price_momentum_5_to_10=pm_momentum_5_to_10,
+            prev_pm_t12_5=prev_pm,
+            prev2_pm_t12_5=prev2_pm,
+            window_time=window_time,
+            volatility_regime=volatility_regime,
             resolved_at_utc=datetime.now(timezone.utc),
             resolution_source="spot_price_comparison",
         )
+
+        # Shift prev tracking: prev -> prev2, current -> prev
+        self._prev2_pm_t12_5[asset] = self._prev_pm_t12_5.get(asset)
+        self._prev_pm_t12_5[asset] = pm_yes_t12_5
 
         # Store in database
         await self.db.insert_window(window)

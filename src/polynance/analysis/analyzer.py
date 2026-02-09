@@ -446,47 +446,8 @@ class Analyzer:
         return "No clear relationship - signal strength does not predict magnitude"
 
     async def _store_analysis_results(self, asset: str, results: dict):
-        """Store analysis results in database."""
-        correlations = {}
-        accuracies = {}
-        expected_values = {}
-
-        # Extract key metrics
-        if "correlations" in results:
-            corr_data = results["correlations"]
-            for key in ["yes_t5_vs_outcome", "yes_t10_vs_outcome",
-                       "momentum_0_5_vs_outcome", "signal_strength_vs_magnitude"]:
-                if key in corr_data:
-                    correlations[key] = corr_data[key].get("correlation")
-
-        # Extract accuracies from signal buckets
-        if "signal_buckets" in results:
-            for bucket in results["signal_buckets"]:
-                name = bucket["name"]
-                if "0.55-0.60" in name:
-                    accuracies["yes_gt_55"] = bucket["win_rate"]
-                    expected_values["yes_gt_55_bps"] = bucket["expected_value_bps"]
-                elif "0.60-0.65" in name:
-                    accuracies["yes_gt_60"] = bucket["win_rate"]
-                    expected_values["yes_gt_60_bps"] = bucket["expected_value_bps"]
-                elif "0.40-0.45" in name:
-                    accuracies["yes_lt_45"] = bucket["win_rate"]
-                elif "0.35-0.40" in name:
-                    accuracies["yes_lt_40"] = bucket["win_rate"]
-
-        calibration_error = None
-        if "calibration" in results:
-            calibration_error = results["calibration"].get("mean_absolute_error")
-
-        await self.db.insert_analysis_result(
-            asset=asset,
-            window_count=results.get("window_count", 0),
-            correlations=correlations,
-            accuracies=accuracies,
-            expected_values=expected_values,
-            calibration_error=calibration_error or 0,
-            raw_data=results,
-        )
+        """Store analysis results (deprecated — analysis_results table removed)."""
+        logger.debug(f"Skipping analysis storage for {asset} (table dropped)")
 
     def format_summary(self, results: dict) -> str:
         """Format analysis results as a human-readable summary."""

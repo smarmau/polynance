@@ -416,6 +416,15 @@ class SimulatedTrader:
             # Fixed bet size
             bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
 
+            # Compute signal metadata
+            _spot_vel = sample.spot_price_change_from_open
+            _pm_t0 = None
+            for s in state.samples:
+                if s.t_minutes == 0.0:
+                    _pm_t0 = s.pm_yes_price
+                    break
+            _pm_mom = abs(pm_yes - _pm_t0) if _pm_t0 is not None else None
+
             # Create trade
             trade = SimulatedTrade(
                 window_id=sample.window_id,
@@ -425,6 +434,11 @@ class SimulatedTrader:
                 entry_price=entry_price,
                 bet_size=bet_size,
                 outcome="pending",
+                entry_mode="two_stage",
+                prev_pm=self._prev_window_pm.get(asset),
+                prev2_pm=self._prev2_window_pm.get(asset),
+                spot_velocity=_spot_vel,
+                pm_momentum=_pm_mom,
             )
 
             # Store in database
@@ -574,6 +588,15 @@ class SimulatedTrader:
             # Fixed bet size
             bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
 
+            # Compute signal metadata
+            _spot_vel = sample.spot_price_change_from_open
+            _pm_t0 = None
+            for s in state.samples:
+                if s.t_minutes == 0.0:
+                    _pm_t0 = s.pm_yes_price
+                    break
+            _pm_mom = abs(pm_yes - _pm_t0) if _pm_t0 is not None else None
+
             # Create trade
             trade = SimulatedTrade(
                 window_id=sample.window_id,
@@ -583,6 +606,11 @@ class SimulatedTrader:
                 entry_price=entry_price,
                 bet_size=bet_size,
                 outcome="pending",
+                entry_mode="single",
+                prev_pm=self._prev_window_pm.get(asset),
+                prev2_pm=self._prev2_window_pm.get(asset),
+                spot_velocity=_spot_vel,
+                pm_momentum=_pm_mom,
             )
 
             # Store in database
@@ -702,6 +730,15 @@ class SimulatedTrader:
             # Fixed bet size
             bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
 
+            # Compute signal metadata
+            _spot_vel = sample.spot_price_change_from_open
+            _pm_t0 = None
+            for s in state.samples:
+                if s.t_minutes == 0.0:
+                    _pm_t0 = s.pm_yes_price
+                    break
+            _pm_mom = abs(pm_yes - _pm_t0) if _pm_t0 is not None else None
+
             # Create trade
             trade = SimulatedTrade(
                 window_id=sample.window_id,
@@ -711,6 +748,11 @@ class SimulatedTrader:
                 entry_price=entry_price,
                 bet_size=bet_size,
                 outcome="pending",
+                entry_mode="contrarian",
+                prev_pm=prev_pm,
+                prev2_pm=self._prev2_window_pm.get(asset),
+                spot_velocity=_spot_vel,
+                pm_momentum=_pm_mom,
             )
 
             # Store in database
@@ -1067,6 +1109,10 @@ class SimulatedTrader:
                 self.state.current_bankroll * self.max_bet_pct,
             )
 
+            # Compute signal metadata
+            _spot_vel = sample.spot_price_change_from_open
+            _pm_mom = abs(pm_yes - 0.50)  # distance from neutral at entry
+
             # Create trade
             trade = SimulatedTrade(
                 window_id=sample.window_id,
@@ -1076,6 +1122,11 @@ class SimulatedTrader:
                 entry_price=entry_price,
                 bet_size=bet_size,
                 outcome="pending",
+                entry_mode="contrarian_consensus",
+                prev_pm=self._prev_window_pm.get(asset),
+                prev2_pm=self._prev2_window_pm.get(asset),
+                spot_velocity=_spot_vel,
+                pm_momentum=_pm_mom,
             )
 
             # Store in database
@@ -1187,6 +1238,10 @@ class SimulatedTrader:
 
             bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
 
+            # Signal metadata
+            _spot_vel = sample.spot_price_change_from_open
+            _pm_mom = abs(pm_yes - t0_pm) if t0_pm is not None else None
+
             trade = SimulatedTrade(
                 window_id=sample.window_id,
                 asset=asset,
@@ -1195,6 +1250,11 @@ class SimulatedTrader:
                 entry_price=entry_price,
                 bet_size=bet_size,
                 outcome="pending",
+                entry_mode="accel_dbl",
+                prev_pm=prev1,
+                prev2_pm=prev2,
+                spot_velocity=_spot_vel,
+                pm_momentum=_pm_mom,
             )
 
             await self.trading_db.insert_trade(trade)
@@ -1362,6 +1422,12 @@ class SimulatedTrader:
 
             bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
 
+            # Signal metadata
+            prev2 = self._prev2_window_pm.get(asset, 0)
+            prev1 = self._prev_window_pm.get(asset, 0)
+            _spot_vel = sample.spot_price_change_from_open
+            _pm_mom = abs(pm_yes - 0.50)
+
             trade = SimulatedTrade(
                 window_id=sample.window_id,
                 asset=asset,
@@ -1370,14 +1436,16 @@ class SimulatedTrader:
                 entry_price=entry_price,
                 bet_size=bet_size,
                 outcome="pending",
+                entry_mode="combo_dbl",
+                prev_pm=prev1,
+                prev2_pm=prev2,
+                spot_velocity=_spot_vel,
+                pm_momentum=_pm_mom,
             )
 
             await self.trading_db.insert_trade(trade)
             self.open_trades[asset] = trade
             await self.trading_db.save_state(self.state)
-
-            prev2 = self._prev2_window_pm.get(asset, 0)
-            prev1 = self._prev_window_pm.get(asset, 0)
             logger.info(
                 f"[{asset}] COMBO_DBL {direction.upper()}: "
                 f"prev2={prev2:.3f} prev1={prev1:.3f} "

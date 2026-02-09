@@ -1,5 +1,5 @@
 {
-  "entry_mode": "contrarian_consensus",
+  "entry_mode": "accel_dbl",
 
   "contrarian_prev_thresh": 0.75,
   "contrarian_bull_thresh": 0.50,

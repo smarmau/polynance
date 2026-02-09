@@ -37,6 +37,13 @@ class SimulatedTrade:
     drawdown: Optional[float] = None
     drawdown_pct: Optional[float] = None
 
+    # Strategy metadata
+    entry_mode: Optional[str] = None  # e.g. 'contrarian', 'contrarian_consensus', 'accel_dbl', 'combo_dbl'
+    prev_pm: Optional[float] = None  # prev window pm_yes@t12.5
+    prev2_pm: Optional[float] = None  # prev2 window pm_yes@t12.5
+    spot_velocity: Optional[float] = None  # spot_price_change_from_open at entry
+    pm_momentum: Optional[float] = None  # |pm_t_entry - pm_t0| at entry
+
     # Metadata
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
@@ -78,6 +85,11 @@ class SimulatedTrade:
             "bankroll_after": self.bankroll_after,
             "drawdown": self.drawdown,
             "drawdown_pct": self.drawdown_pct,
+            "entry_mode": self.entry_mode,
+            "prev_pm": self.prev_pm,
+            "prev2_pm": self.prev2_pm,
+            "spot_velocity": self.spot_velocity,
+            "pm_momentum": self.pm_momentum,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
         }

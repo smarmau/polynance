@@ -43,6 +43,7 @@ class TradingDashboard:
         self._asset_stats: Dict[str, dict] = {}
         self._today_stats: dict = {}
         self._metrics: dict = {}
+        self._asset_regimes: Dict[str, str] = {}  # latest volatility regime per asset
 
     async def run(self):
         """Run the dashboard in a live loop."""
@@ -93,6 +94,15 @@ class TradingDashboard:
 
         try:
             self._metrics = await self.trader.calculate_metrics()
+        except Exception:
+            pass
+
+        # Fetch latest volatility regime per asset from most recent window
+        try:
+            for asset in self.sampler.assets:
+                recent = await self.sampler.db.get_recent_windows(asset, limit=1)
+                if recent and recent[0].volatility_regime:
+                    self._asset_regimes[asset] = recent[0].volatility_regime
         except Exception:
             pass
 
@@ -504,11 +514,12 @@ class TradingDashboard:
     def _make_per_asset_panel(self) -> Panel:
         """Create the per-asset summary panel."""
         table = Table(show_header=True, header_style="bold green", expand=True)
-        table.add_column("Asset", width=6)
-        table.add_column("Trades", justify="right", width=7)
-        table.add_column("Win%", justify="right", width=7)
-        table.add_column("P&L", justify="right", width=10)
-        table.add_column("Signal", width=6)
+        table.add_column("Asset", width=5)
+        table.add_column("Trd", justify="right", width=4)
+        table.add_column("Win%", justify="right", width=6)
+        table.add_column("P&L", justify="right", width=8)
+        table.add_column("Sig", width=5)
+        table.add_column("Vol", width=4)
 
         for asset in self.sampler.assets:
             stats = self._asset_stats.get(asset, {})
@@ -516,6 +527,7 @@ class TradingDashboard:
             win_rate = stats.get("win_rate", 0) * 100
             total_pnl = stats.get("total_pnl", 0)
             last_signal = self.trader.get_last_signal(asset)
+            regime = self._asset_regimes.get(asset)
 
             wr_color = "green" if win_rate >= 55 else "yellow" if win_rate >= 50 else "red" if trades > 0 else "dim"
             pnl_color = "green" if total_pnl > 0 else "red" if total_pnl < 0 else "dim"
@@ -542,12 +554,25 @@ class TradingDashboard:
             else:
                 signal_str = "[dim]-[/dim]"
 
+            # Regime display
+            if regime == "extreme":
+                regime_str = "[red bold]EXT[/red bold]"
+            elif regime == "high":
+                regime_str = "[yellow]HI[/yellow]"
+            elif regime == "normal":
+                regime_str = "[green]NRM[/green]"
+            elif regime == "low":
+                regime_str = "[dim]LOW[/dim]"
+            else:
+                regime_str = "[dim]-[/dim]"
+
             table.add_row(
                 f"[bold]{asset}[/bold]",
                 str(trades),
                 f"[{wr_color}]{win_rate:.0f}%[/{wr_color}]" if trades > 0 else "[dim]-[/dim]",
                 f"[{pnl_color}]${total_pnl:+,.0f}[/{pnl_color}]" if trades > 0 else "[dim]-[/dim]",
                 signal_str,
+                regime_str,
             )
 
         return Panel(table, title="Per-Asset Summary", border_style="green")

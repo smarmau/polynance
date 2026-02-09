@@ -1,6 +1,6 @@
 """Data models for polynance database."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -71,37 +71,18 @@ class Window:
     pm_price_momentum_0_to_5: Optional[float] = None
     pm_price_momentum_5_to_10: Optional[float] = None
 
+    # Cross-window references
+    prev_pm_t12_5: Optional[float] = None  # previous window's pm_yes@t12.5
+    prev2_pm_t12_5: Optional[float] = None  # window-before-prev pm_yes@t12.5
+
+    # Cross-asset key (time portion of window_id, no asset prefix)
+    window_time: Optional[str] = None
+
+    # Regime classification (informational only, does not affect strategy)
+    volatility_regime: Optional[str] = None  # 'low', 'normal', 'high', 'extreme'
+
     # Resolution
     resolved_at_utc: Optional[datetime] = None
     resolution_source: Optional[str] = None
 
 
-@dataclass
-class AnalysisResult:
-    """Results from a correlation/signal analysis."""
-
-    analysis_time: datetime
-    asset: str
-    window_count: int
-
-    # Correlation coefficients
-    corr_yes_t5_vs_outcome: Optional[float] = None
-    corr_yes_t10_vs_outcome: Optional[float] = None
-    corr_momentum_vs_outcome: Optional[float] = None
-    corr_signal_strength_vs_magnitude: Optional[float] = None
-
-    # Signal performance
-    accuracy_yes_gt_55: Optional[float] = None  # Win rate when yes > 0.55
-    accuracy_yes_gt_60: Optional[float] = None  # Win rate when yes > 0.60
-    accuracy_yes_lt_45: Optional[float] = None  # Win rate when yes < 0.45
-    accuracy_yes_lt_40: Optional[float] = None  # Win rate when yes < 0.40
-
-    # Expected values
-    ev_yes_gt_55_bps: Optional[float] = None
-    ev_yes_gt_60_bps: Optional[float] = None
-
-    # Calibration
-    calibration_error: Optional[float] = None  # Mean absolute calibration error
-
-    # Raw data for detailed analysis
-    raw_data: Optional[dict] = field(default=None)

@@ -75,41 +75,21 @@ CREATE TABLE IF NOT EXISTS windows (
     pm_price_momentum_0_to_5 REAL,
     pm_price_momentum_5_to_10 REAL,
 
+    -- Cross-window references
+    prev_pm_t12_5 REAL,
+    prev2_pm_t12_5 REAL,
+
+    -- Cross-asset key
+    window_time TEXT,
+
+    -- Regime classification
+    volatility_regime TEXT,
+
     -- Resolution
     resolved_at_utc TIMESTAMP,
     resolution_source TEXT,
 
     PRIMARY KEY (window_id, asset)
-);
-
--- Analysis results table
-CREATE TABLE IF NOT EXISTS analysis_results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    analysis_time TIMESTAMP NOT NULL,
-    asset TEXT NOT NULL,
-    window_count INTEGER,
-
-    -- Correlation coefficients
-    corr_yes_t5_vs_outcome REAL,
-    corr_yes_t10_vs_outcome REAL,
-    corr_momentum_vs_outcome REAL,
-    corr_signal_strength_vs_magnitude REAL,
-
-    -- Signal performance
-    accuracy_yes_gt_55 REAL,
-    accuracy_yes_gt_60 REAL,
-    accuracy_yes_lt_45 REAL,
-    accuracy_yes_lt_40 REAL,
-
-    -- Expected values
-    ev_yes_gt_55_bps REAL,
-    ev_yes_gt_60_bps REAL,
-
-    -- Calibration
-    calibration_error REAL,
-
-    -- JSON blob for detailed results
-    raw_data TEXT
 );
 
 -- Indexes for efficient queries
@@ -118,7 +98,7 @@ CREATE INDEX IF NOT EXISTS idx_samples_time ON samples(sample_time_utc);
 CREATE INDEX IF NOT EXISTS idx_samples_asset ON samples(asset);
 CREATE INDEX IF NOT EXISTS idx_windows_asset ON windows(asset);
 CREATE INDEX IF NOT EXISTS idx_windows_time ON windows(window_start_utc);
-CREATE INDEX IF NOT EXISTS idx_analysis_asset ON analysis_results(asset);
+CREATE INDEX IF NOT EXISTS idx_windows_time_key ON windows(window_time);
 """
 
 
@@ -146,7 +126,50 @@ class Database:
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
 
+        # Run migrations for existing databases
+        await self._run_migrations()
+
         logger.info(f"Connected to database: {self.db_path}")
+
+    async def _run_migrations(self):
+        """Run database migrations for schema updates."""
+        # Migration: Add new columns to windows table
+        try:
+            cursor = await self._conn.execute("PRAGMA table_info(windows)")
+            columns = [row[1] for row in await cursor.fetchall()]
+
+            new_cols = {
+                "prev_pm_t12_5": "REAL",
+                "prev2_pm_t12_5": "REAL",
+                "window_time": "TEXT",
+                "volatility_regime": "TEXT",
+            }
+            for col_name, col_type in new_cols.items():
+                if col_name not in columns:
+                    await self._conn.execute(
+                        f"ALTER TABLE windows ADD COLUMN {col_name} {col_type}"
+                    )
+                    logger.info(f"Migration: Added {col_name} column to windows")
+            await self._conn.commit()
+        except Exception as e:
+            logger.debug(f"Migration check (windows): {e}")
+
+        # Migration: Drop analysis_results table if it exists
+        try:
+            await self._conn.execute("DROP TABLE IF EXISTS analysis_results")
+            await self._conn.commit()
+            logger.debug("Migration: Dropped analysis_results table")
+        except Exception as e:
+            logger.debug(f"Migration check (drop analysis_results): {e}")
+
+        # Migration: Create window_time index if missing
+        try:
+            await self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_windows_time_key ON windows(window_time)"
+            )
+            await self._conn.commit()
+        except Exception as e:
+            logger.debug(f"Migration check (window_time index): {e}")
 
     async def close(self):
         """Close the database connection."""
@@ -244,8 +267,10 @@ class Database:
             pm_yes_t0, pm_yes_t2_5, pm_yes_t5, pm_yes_t7_5, pm_yes_t10, pm_yes_t12_5,
             pm_spread_t0, pm_spread_t5,
             pm_price_momentum_0_to_5, pm_price_momentum_5_to_10,
+            prev_pm_t12_5, prev2_pm_t12_5,
+            window_time, volatility_regime,
             resolved_at_utc, resolution_source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         await self.conn.execute(
             sql,
@@ -273,6 +298,10 @@ class Database:
                 window.pm_spread_t5,
                 window.pm_price_momentum_0_to_5,
                 window.pm_price_momentum_5_to_10,
+                window.prev_pm_t12_5,
+                window.prev2_pm_t12_5,
+                window.window_time,
+                window.volatility_regime,
                 window.resolved_at_utc.isoformat() if window.resolved_at_utc else None,
                 window.resolution_source,
             ),
@@ -343,6 +372,7 @@ class Database:
 
     def _row_to_window(self, row: aiosqlite.Row) -> Window:
         """Convert a database row to a Window object."""
+        keys = row.keys()
         return Window(
             window_id=row["window_id"],
             asset=row["asset"],
@@ -367,6 +397,10 @@ class Database:
             pm_spread_t5=row["pm_spread_t5"],
             pm_price_momentum_0_to_5=row["pm_price_momentum_0_to_5"],
             pm_price_momentum_5_to_10=row["pm_price_momentum_5_to_10"],
+            prev_pm_t12_5=row["prev_pm_t12_5"] if "prev_pm_t12_5" in keys else None,
+            prev2_pm_t12_5=row["prev2_pm_t12_5"] if "prev2_pm_t12_5" in keys else None,
+            window_time=row["window_time"] if "window_time" in keys else None,
+            volatility_regime=row["volatility_regime"] if "volatility_regime" in keys else None,
             resolved_at_utc=(
                 datetime.fromisoformat(row["resolved_at_utc"])
                 if row["resolved_at_utc"]
@@ -374,93 +408,6 @@ class Database:
             ),
             resolution_source=row["resolution_source"],
         )
-
-    # Analysis operations
-
-    async def insert_analysis_result(
-        self,
-        asset: str,
-        window_count: int,
-        correlations: dict,
-        accuracies: dict,
-        expected_values: dict,
-        calibration_error: float,
-        raw_data: dict,
-    ):
-        """Insert an analysis result."""
-        import json
-
-        sql = """
-        INSERT INTO analysis_results (
-            analysis_time, asset, window_count,
-            corr_yes_t5_vs_outcome, corr_yes_t10_vs_outcome,
-            corr_momentum_vs_outcome, corr_signal_strength_vs_magnitude,
-            accuracy_yes_gt_55, accuracy_yes_gt_60,
-            accuracy_yes_lt_45, accuracy_yes_lt_40,
-            ev_yes_gt_55_bps, ev_yes_gt_60_bps,
-            calibration_error, raw_data
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        await self.conn.execute(
-            sql,
-            (
-                datetime.now(timezone.utc).isoformat(),
-                asset,
-                window_count,
-                correlations.get("yes_t5_vs_outcome"),
-                correlations.get("yes_t10_vs_outcome"),
-                correlations.get("momentum_vs_outcome"),
-                correlations.get("signal_strength_vs_magnitude"),
-                accuracies.get("yes_gt_55"),
-                accuracies.get("yes_gt_60"),
-                accuracies.get("yes_lt_45"),
-                accuracies.get("yes_lt_40"),
-                expected_values.get("yes_gt_55_bps"),
-                expected_values.get("yes_gt_60_bps"),
-                calibration_error,
-                json.dumps(raw_data),
-            ),
-        )
-        await self.conn.commit()
-
-    async def get_latest_analysis(self, asset: str) -> Optional[dict]:
-        """Get the most recent analysis result for an asset."""
-        import json
-
-        sql = """
-        SELECT * FROM analysis_results
-        WHERE asset = ?
-        ORDER BY analysis_time DESC
-        LIMIT 1
-        """
-        cursor = await self.conn.execute(sql, (asset,))
-        row = await cursor.fetchone()
-
-        if row:
-            return {
-                "analysis_time": datetime.fromisoformat(row["analysis_time"]),
-                "asset": row["asset"],
-                "window_count": row["window_count"],
-                "correlations": {
-                    "yes_t5_vs_outcome": row["corr_yes_t5_vs_outcome"],
-                    "yes_t10_vs_outcome": row["corr_yes_t10_vs_outcome"],
-                    "momentum_vs_outcome": row["corr_momentum_vs_outcome"],
-                    "signal_strength_vs_magnitude": row["corr_signal_strength_vs_magnitude"],
-                },
-                "accuracies": {
-                    "yes_gt_55": row["accuracy_yes_gt_55"],
-                    "yes_gt_60": row["accuracy_yes_gt_60"],
-                    "yes_lt_45": row["accuracy_yes_lt_45"],
-                    "yes_lt_40": row["accuracy_yes_lt_40"],
-                },
-                "expected_values": {
-                    "yes_gt_55_bps": row["ev_yes_gt_55_bps"],
-                    "yes_gt_60_bps": row["ev_yes_gt_60_bps"],
-                },
-                "calibration_error": row["calibration_error"],
-                "raw_data": json.loads(row["raw_data"]) if row["raw_data"] else None,
-            }
-        return None
 
     # Statistics
 

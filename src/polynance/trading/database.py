@@ -81,6 +81,13 @@ CREATE TABLE IF NOT EXISTS sim_trades (
     drawdown REAL,
     drawdown_pct REAL,
 
+    -- Strategy metadata
+    entry_mode TEXT,
+    prev_pm REAL,
+    prev2_pm REAL,
+    spot_velocity REAL,
+    pm_momentum REAL,
+
     -- Metadata
     created_at TIMESTAMP NOT NULL,
     resolved_at TIMESTAMP
@@ -138,6 +145,28 @@ class TradingDatabase:
                 logger.info("Migration: Added pause_windows_remaining column to sim_state")
         except Exception as e:
             logger.debug(f"Migration check: {e}")
+
+        # Migration: Add strategy metadata columns to sim_trades
+        try:
+            cursor = await self._conn.execute("PRAGMA table_info(sim_trades)")
+            columns = [row[1] for row in await cursor.fetchall()]
+
+            new_cols = {
+                "entry_mode": "TEXT",
+                "prev_pm": "REAL",
+                "prev2_pm": "REAL",
+                "spot_velocity": "REAL",
+                "pm_momentum": "REAL",
+            }
+            for col_name, col_type in new_cols.items():
+                if col_name not in columns:
+                    await self._conn.execute(
+                        f"ALTER TABLE sim_trades ADD COLUMN {col_name} {col_type}"
+                    )
+                    logger.info(f"Migration: Added {col_name} column to sim_trades")
+            await self._conn.commit()
+        except Exception as e:
+            logger.debug(f"Migration check (sim_trades metadata): {e}")
 
     async def close(self):
         """Close the database connection."""
@@ -241,8 +270,9 @@ class TradingDatabase:
             exit_time, exit_price, outcome,
             gross_pnl, fee_paid, spread_cost, net_pnl,
             bankroll_after, drawdown, drawdown_pct,
+            entry_mode, prev_pm, prev2_pm, spot_velocity, pm_momentum,
             created_at, resolved_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         cursor = await self.conn.execute(
@@ -265,6 +295,11 @@ class TradingDatabase:
                 trade.bankroll_after,
                 trade.drawdown,
                 trade.drawdown_pct,
+                trade.entry_mode,
+                trade.prev_pm,
+                trade.prev2_pm,
+                trade.spot_velocity,
+                trade.pm_momentum,
                 trade.created_at.isoformat() if trade.created_at else None,
                 trade.resolved_at.isoformat() if trade.resolved_at else None,
             ),
@@ -380,6 +415,7 @@ class TradingDatabase:
 
     def _row_to_trade(self, row: aiosqlite.Row) -> SimulatedTrade:
         """Convert a database row to a SimulatedTrade object."""
+        keys = row.keys()
         return SimulatedTrade(
             trade_id=row["trade_id"],
             window_id=row["window_id"],
@@ -406,6 +442,11 @@ class TradingDatabase:
             bankroll_after=row["bankroll_after"],
             drawdown=row["drawdown"],
             drawdown_pct=row["drawdown_pct"],
+            entry_mode=row["entry_mode"] if "entry_mode" in keys else None,
+            prev_pm=row["prev_pm"] if "prev_pm" in keys else None,
+            prev2_pm=row["prev2_pm"] if "prev2_pm" in keys else None,
+            spot_velocity=row["spot_velocity"] if "spot_velocity" in keys else None,
+            pm_momentum=row["pm_momentum"] if "pm_momentum" in keys else None,
             created_at=(
                 datetime.fromisoformat(row["created_at"])
                 if row["created_at"]
