@@ -82,6 +82,17 @@ class SimulatedTrader:
     DEFAULT_COMBO_STOP_DELTA = 0.10
     DEFAULT_COMBO_XASSET_MIN = 2
 
+    # Triple filter defaults
+    # Double contrarian + cross-asset consensus (N dbl-strong) + PM t0 confirmation
+    DEFAULT_TRIPLE_PREV_THRESH = 0.70
+    DEFAULT_TRIPLE_BULL_THRESH = 0.55
+    DEFAULT_TRIPLE_BEAR_THRESH = 0.45
+    DEFAULT_TRIPLE_ENTRY_TIME = "t5"
+    DEFAULT_TRIPLE_EXIT_TIME = "t12.5"
+    DEFAULT_TRIPLE_XASSET_MIN = 3         # min assets with double-strong prev
+    DEFAULT_TRIPLE_PM0_BULL_MIN = 0.50    # pm t0 must be >= this for bull entry
+    DEFAULT_TRIPLE_PM0_BEAR_MAX = 0.50    # pm t0 must be <= this for bear entry
+
     def __init__(
         self,
         trading_db: TradingDatabase,
@@ -124,6 +135,15 @@ class SimulatedTrader:
         combo_stop_time: str = DEFAULT_COMBO_STOP_TIME,
         combo_stop_delta: float = DEFAULT_COMBO_STOP_DELTA,
         combo_xasset_min: int = DEFAULT_COMBO_XASSET_MIN,
+        # Triple filter
+        triple_prev_thresh: float = DEFAULT_TRIPLE_PREV_THRESH,
+        triple_bull_thresh: float = DEFAULT_TRIPLE_BULL_THRESH,
+        triple_bear_thresh: float = DEFAULT_TRIPLE_BEAR_THRESH,
+        triple_entry_time: str = DEFAULT_TRIPLE_ENTRY_TIME,
+        triple_exit_time: str = DEFAULT_TRIPLE_EXIT_TIME,
+        triple_xasset_min: int = DEFAULT_TRIPLE_XASSET_MIN,
+        triple_pm0_bull_min: float = DEFAULT_TRIPLE_PM0_BULL_MIN,
+        triple_pm0_bear_max: float = DEFAULT_TRIPLE_PM0_BEAR_MAX,
     ):
         """Initialize the simulated trader.
 
@@ -200,6 +220,16 @@ class SimulatedTrader:
         self.combo_stop_delta = combo_stop_delta
         self.combo_xasset_min = combo_xasset_min
 
+        # Triple filter configuration
+        self.triple_prev_thresh = triple_prev_thresh
+        self.triple_bull_thresh = triple_bull_thresh
+        self.triple_bear_thresh = triple_bear_thresh
+        self.triple_entry_time = triple_entry_time
+        self.triple_exit_time = triple_exit_time
+        self.triple_xasset_min = triple_xasset_min
+        self.triple_pm0_bull_min = triple_pm0_bull_min
+        self.triple_pm0_bear_max = triple_pm0_bear_max
+
         # Map time labels to t_minutes values for contrarian
         self._time_to_minutes = {
             "t0": 0.0, "t2.5": 2.5, "t5": 5.0,
@@ -258,6 +288,13 @@ class SimulatedTrader:
         # Maps asset -> pm_yes at entry time
         self._combo_entry_pm: Dict[str, float] = {}
 
+        # Triple filter: buffer for cross-asset evaluation at entry time
+        # Maps time_key -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
+        self._triple_buffer: Dict[str, Dict[str, dict]] = {}
+        self._triple_evaluated: set = set()
+        # Triple filter: store t0 pm_yes for PM0 confirmation check
+        self._triple_t0_pm: Dict[str, float] = {}
+
     async def initialize(self):
         """Load or initialize trading state from database."""
         logger.info("Initializing simulated trader...")
@@ -279,7 +316,7 @@ class SimulatedTrader:
         else:
             # Recalculate bet size from win streak (handles sizer changes)
             old_bet = self.state.current_bet_size
-            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
+            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
                 # Fixed sizing for contrarian-family modes
                 self.state.current_bet_size = self.base_bet
             else:
@@ -851,7 +888,7 @@ class SimulatedTrader:
                     )
 
             # Update bet size (fixed for contrarian-family, dynamic for others)
-            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
+            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
                 self.state.current_bet_size = self.base_bet
             else:
                 self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
@@ -1512,6 +1549,228 @@ class SimulatedTrader:
             await self.on_sample_at_contrarian_exit(asset, sample, state)
             self._combo_entry_pm.pop(asset, None)
 
+    # =========================================================================
+    # TRIPLE FILTER Strategy Methods
+    # Double contrarian + cross-asset consensus (N dbl-strong) + PM t0 confirmation
+    # =========================================================================
+
+    async def on_sample_at_triple_t0(self, asset: str, sample, state):
+        """Record t0 pm_yes for PM0 confirmation check."""
+        pm_yes = sample.pm_yes_price
+        if pm_yes is not None:
+            self._triple_t0_pm[asset] = pm_yes
+        else:
+            self._triple_t0_pm.pop(asset, None)
+
+    async def on_sample_at_triple_entry(self, asset: str, sample, state):
+        """Buffer sample at triple entry time. Once all assets arrive, evaluate.
+
+        Triple filter requires:
+        1. This asset has double-strong prev (prev2 AND prev1 both strong)
+        2. At least triple_xasset_min assets have double-strong prev same direction
+        3. PM t0 confirms direction (pm0 <= bear_max for bear, >= bull_min for bull)
+        4. Current pm confirms reversal (pm <= bear_thresh for bear, >= bull_thresh for bull)
+        """
+        try:
+            pm_yes = sample.pm_yes_price
+            time_key = "_".join(sample.window_id.split("_")[1:])
+
+            if time_key not in self._triple_buffer:
+                self._triple_buffer[time_key] = {}
+
+            self._triple_buffer[time_key][asset] = {
+                "pm_yes": pm_yes,
+                "sample": sample,
+                "state": state,
+            }
+
+            if pm_yes is None:
+                self._last_signals[asset] = None
+
+            expected_assets = set(self.asset_databases.keys())
+            arrived_assets = set(self._triple_buffer[time_key].keys())
+
+            if arrived_assets >= expected_assets and time_key not in self._triple_evaluated:
+                self._triple_evaluated.add(time_key)
+                await self._evaluate_triple(time_key)
+
+                # Clean up old buffers
+                old_keys = [k for k in self._triple_buffer if k != time_key]
+                for k in old_keys:
+                    del self._triple_buffer[k]
+                self._triple_evaluated -= set(old_keys)
+
+        except Exception as e:
+            logger.error(f"[{asset}] Error in triple entry buffer: {e}", exc_info=True)
+
+    async def _evaluate_triple(self, time_key: str):
+        """Evaluate triple filter cross-asset and enter trades.
+
+        Requirements for each traded asset:
+        1. Double-strong prev: prev2 AND prev1 both >= thresh (UP) or <= 1-thresh (DOWN)
+        2. Cross-asset consensus: at least triple_xasset_min assets have double-strong same dir
+        3. PM t0 confirmation: pm0 <= triple_pm0_bear_max (bear) or >= triple_pm0_bull_min (bull)
+        4. Current pm confirmation: pm <= triple_bear_thresh (bear) or >= triple_bull_thresh (bull)
+        """
+        buffer = self._triple_buffer.get(time_key, {})
+        if not buffer:
+            return
+
+        thresh = self.triple_prev_thresh
+
+        # Count assets with double-strong prev in each direction
+        dbl_strong_up = []    # assets with prev2 >= thresh AND prev1 >= thresh
+        dbl_strong_down = []  # assets with prev2 <= 1-thresh AND prev1 <= 1-thresh
+
+        for asset in buffer:
+            prev2 = self._prev2_window_pm.get(asset)
+            prev1 = self._prev_window_pm.get(asset)
+            if prev2 is None or prev1 is None:
+                continue
+            if prev2 >= thresh and prev1 >= thresh:
+                dbl_strong_up.append(asset)
+            elif prev2 <= (1.0 - thresh) and prev1 <= (1.0 - thresh):
+                dbl_strong_down.append(asset)
+
+        # Bear direction (from double strong UP)
+        if len(dbl_strong_up) >= self.triple_xasset_min:
+            logger.info(
+                f"[TRIPLE] {len(dbl_strong_up)}/{len(buffer)} assets double-strong UP "
+                f"(>= {self.triple_xasset_min}) → evaluating BEAR entries"
+            )
+            for asset in dbl_strong_up:
+                data = buffer[asset]
+                pm_yes = data["pm_yes"]
+                if pm_yes is None:
+                    self._last_signals[asset] = None
+                    continue
+
+                # PM t0 confirmation: for bear, pm0 should be <= bear_max
+                t0_pm = self._triple_t0_pm.get(asset)
+                if t0_pm is None:
+                    self._last_signals[asset] = "triple-no-t0"
+                    continue
+                if t0_pm > self.triple_pm0_bear_max:
+                    logger.debug(
+                        f"[{asset}] TRIPLE: pm0={t0_pm:.3f} > {self.triple_pm0_bear_max} "
+                        f"(PM0 not confirming bear)"
+                    )
+                    self._last_signals[asset] = "triple-pm0-fail"
+                    continue
+
+                # Current pm confirmation
+                if pm_yes <= self.triple_bear_thresh:
+                    await self._enter_triple_trade(asset, "bear", data)
+                else:
+                    self._last_signals[asset] = "bear-no-confirm"
+        else:
+            for asset in dbl_strong_up:
+                self._last_signals[asset] = "triple-no-xasset"
+
+        # Bull direction (from double strong DOWN)
+        if len(dbl_strong_down) >= self.triple_xasset_min:
+            logger.info(
+                f"[TRIPLE] {len(dbl_strong_down)}/{len(buffer)} assets double-strong DOWN "
+                f"(>= {self.triple_xasset_min}) → evaluating BULL entries"
+            )
+            for asset in dbl_strong_down:
+                data = buffer[asset]
+                pm_yes = data["pm_yes"]
+                if pm_yes is None:
+                    self._last_signals[asset] = None
+                    continue
+
+                # PM t0 confirmation: for bull, pm0 should be >= bull_min
+                t0_pm = self._triple_t0_pm.get(asset)
+                if t0_pm is None:
+                    self._last_signals[asset] = "triple-no-t0"
+                    continue
+                if t0_pm < self.triple_pm0_bull_min:
+                    logger.debug(
+                        f"[{asset}] TRIPLE: pm0={t0_pm:.3f} < {self.triple_pm0_bull_min} "
+                        f"(PM0 not confirming bull)"
+                    )
+                    self._last_signals[asset] = "triple-pm0-fail"
+                    continue
+
+                # Current pm confirmation
+                if pm_yes >= self.triple_bull_thresh:
+                    await self._enter_triple_trade(asset, "bull", data)
+                else:
+                    self._last_signals[asset] = "bull-no-confirm"
+        else:
+            for asset in dbl_strong_down:
+                self._last_signals[asset] = "triple-no-xasset"
+
+        # Mark assets with no double-strong prev
+        all_qualifying = set(dbl_strong_up) | set(dbl_strong_down)
+        for asset in buffer:
+            if asset not in all_qualifying:
+                if self._last_signals.get(asset) is None:
+                    self._last_signals[asset] = None
+
+    async def _enter_triple_trade(self, asset: str, direction: str, data: dict):
+        """Enter a single triple_filter trade."""
+        try:
+            if asset in self.open_trades:
+                return
+
+            if self.state.pause_windows_remaining > 0:
+                self._last_signals[asset] = None
+                return
+
+            sample = data["sample"]
+            pm_yes = data["pm_yes"]
+
+            self._last_signals[asset] = f"{direction}-triple"
+
+            if direction == "bull":
+                entry_price = pm_yes
+            else:
+                entry_price = 1.0 - pm_yes
+
+            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+
+            # Signal metadata
+            prev2 = self._prev2_window_pm.get(asset, 0)
+            prev1 = self._prev_window_pm.get(asset, 0)
+            t0_pm = self._triple_t0_pm.get(asset)
+            _spot_vel = sample.spot_price_change_from_open
+            _pm_mom = abs(pm_yes - t0_pm) if t0_pm is not None else abs(pm_yes - 0.50)
+
+            trade = SimulatedTrade(
+                window_id=sample.window_id,
+                asset=asset,
+                direction=direction,
+                entry_time=sample.sample_time_utc,
+                entry_price=entry_price,
+                bet_size=bet_size,
+                outcome="pending",
+                entry_mode="triple_filter",
+                prev_pm=prev1,
+                prev2_pm=prev2,
+                spot_velocity=_spot_vel,
+                pm_momentum=_pm_mom,
+            )
+
+            await self.trading_db.insert_trade(trade)
+            self.open_trades[asset] = trade
+            await self.trading_db.save_state(self.state)
+
+            logger.info(
+                f"[{asset}] TRIPLE {direction.upper()}: "
+                f"prev2={prev2:.3f} prev1={prev1:.3f} pm0={t0_pm:.3f} "
+                f"entry={entry_price:.3f} (pm={pm_yes:.3f}), "
+                f"bet=${bet_size:.2f}, window={sample.window_id}"
+            )
+
+        except Exception as e:
+            logger.error(f"[{asset}] Error in triple trade entry: {e}", exc_info=True)
+
+    async def on_sample_at_triple_exit(self, asset: str, sample, state):
+        """Handle triple_filter exit — same early-exit P&L as contrarian."""
+        await self.on_sample_at_contrarian_exit(asset, sample, state)
+
     async def on_window_complete(self, asset: str, window: Window):
         """Handle window completion - resolve open trades and track previous window.
 
@@ -1527,7 +1786,7 @@ class SimulatedTrader:
         try:
             # For contrarian-family modes, track previous window's pm_yes at t=12.5
             # This is needed for the next window's entry decision
-            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
+            if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
                 pm_t12_5 = getattr(window, 'pm_yes_t12_5', None)
 
                 if pm_t12_5 is None:
@@ -1558,7 +1817,7 @@ class SimulatedTrader:
             # Resolve any open position for this asset (non-contrarian modes)
             # Contrarian-family trades are already closed at exit time
             if asset in self.open_trades:
-                if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
+                if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
                     # Trade wasn't closed at exit time (missed exit?)
                     # Fall back to binary resolution
                     logger.warning(
@@ -1687,7 +1946,7 @@ class SimulatedTrader:
                 )
 
         # Update bet size for next trade based on new win streak
-        if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl"):
+        if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
             self.state.current_bet_size = self.base_bet
         else:
             # SlowGrowthSizer uses win streak count, not previous bet
@@ -1873,6 +2132,17 @@ class SimulatedTrader:
                 "combo_stop_time": self.combo_stop_time,
                 "combo_stop_delta": self.combo_stop_delta,
                 "combo_xasset_min": self.combo_xasset_min,
+            })
+        if self.entry_mode == "triple_filter":
+            config.update({
+                "triple_prev_thresh": self.triple_prev_thresh,
+                "triple_bull_thresh": self.triple_bull_thresh,
+                "triple_bear_thresh": self.triple_bear_thresh,
+                "triple_entry_time": self.triple_entry_time,
+                "triple_exit_time": self.triple_exit_time,
+                "triple_xasset_min": self.triple_xasset_min,
+                "triple_pm0_bull_min": self.triple_pm0_bull_min,
+                "triple_pm0_bear_max": self.triple_pm0_bear_max,
             })
         return config
 

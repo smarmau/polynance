@@ -132,7 +132,13 @@ async def async_main(args, config: TradingConfig):
     logger.info(f"Assets: {config.assets}")
     logger.info(f"Initial Bankroll: ${config.initial_bankroll:,.2f}")
     logger.info(f"Base Bet: ${config.base_bet:.2f}")
-    if config.entry_mode == "accel_dbl":
+    if config.entry_mode == "triple_filter":
+        logger.info(f"Prev Window Thresh: >= {config.triple_prev_thresh} (double required)")
+        logger.info(f"Cross-Asset: >= {config.triple_xasset_min} assets double-strong")
+        logger.info(f"PM0 Confirm: Bull >= {config.triple_pm0_bull_min}, Bear <= {config.triple_pm0_bear_max}")
+        logger.info(f"Entry: {config.triple_entry_time}, Exit: {config.triple_exit_time}")
+        logger.info(f"Bull Confirm: >= {config.triple_bull_thresh}, Bear Confirm: <= {config.triple_bear_thresh}")
+    elif config.entry_mode == "accel_dbl":
         logger.info(f"Prev Window Thresh: >= {config.accel_prev_thresh} (double required)")
         logger.info(f"Neutral Band: t0 within {config.accel_neutral_band} of 0.50")
         logger.info(f"Entry: {config.accel_entry_time}, Exit: {config.accel_exit_time}")

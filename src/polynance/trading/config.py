@@ -17,13 +17,14 @@ class TradingConfig:
     """Trading configuration settings."""
 
     # Entry mode: "two_stage", "single", "contrarian", "contrarian_consensus",
-    #              "accel_dbl", or "combo_dbl"
+    #              "accel_dbl", "combo_dbl", or "triple_filter"
     # - two_stage: signal at t=7.5, confirm at t=10, hold to resolution
     # - single: enter at t=7.5, hold to resolution
     # - contrarian: after strong prev window, enter at t=0, sell at t=12.5
     # - contrarian_consensus: contrarian + require N-of-4 assets to agree
     # - accel_dbl: double contrarian + t0 near neutral (acceleration filter)
     # - combo_dbl: double contrarian + stop-loss at t7.5 + cross-asset filter
+    # - triple_filter: double contrarian + cross-asset consensus + PM t0 confirmation
     entry_mode: str = "two_stage"
 
     # Two-stage thresholds (entry_mode="two_stage")
@@ -72,6 +73,17 @@ class TradingConfig:
     combo_stop_time: str = "t7.5"         # when to check stop-loss
     combo_stop_delta: float = 0.10        # exit early if position moves against by this
     combo_xasset_min: int = 2             # min OTHER assets also double-strong prev
+
+    # TRIPLE FILTER settings (entry_mode="triple_filter")
+    # Double contrarian + cross-asset consensus (N dbl-strong) + PM t0 confirmation
+    triple_prev_thresh: float = 0.70       # prev window strength threshold
+    triple_bull_thresh: float = 0.55       # entry bull threshold
+    triple_bear_thresh: float = 0.45       # entry bear threshold
+    triple_entry_time: str = "t5"          # when to enter
+    triple_exit_time: str = "t12.5"        # when to exit
+    triple_xasset_min: int = 3             # min assets with double-strong prev
+    triple_pm0_bull_min: float = 0.50      # pm t0 must be >= this for bull
+    triple_pm0_bear_max: float = 0.50      # pm t0 must be <= this for bear
 
     # Portfolio settings
     initial_bankroll: float = 1000.0
@@ -150,6 +162,14 @@ class TradingConfig:
             "combo_stop_time": self.combo_stop_time,
             "combo_stop_delta": self.combo_stop_delta,
             "combo_xasset_min": self.combo_xasset_min,
+            "triple_prev_thresh": self.triple_prev_thresh,
+            "triple_bull_thresh": self.triple_bull_thresh,
+            "triple_bear_thresh": self.triple_bear_thresh,
+            "triple_entry_time": self.triple_entry_time,
+            "triple_exit_time": self.triple_exit_time,
+            "triple_xasset_min": self.triple_xasset_min,
+            "triple_pm0_bull_min": self.triple_pm0_bull_min,
+            "triple_pm0_bear_max": self.triple_pm0_bear_max,
         }
 
     def save(self, path: Optional[Path] = None):

@@ -1,0 +1,22 @@
+{
+  "entry_mode": "triple_filter",
+  "triple_prev_thresh": 0.70,
+  "triple_bull_thresh": 0.55,
+  "triple_bear_thresh": 0.45,
+  "triple_entry_time": "t5",
+  "triple_exit_time": "t12.5",
+  "triple_xasset_min": 3,
+  "triple_pm0_bull_min": 0.50,
+  "triple_pm0_bear_max": 0.50,
+  "initial_bankroll": 1000.0,
+  "base_bet": 50.0,
+  "fee_rate": 0.001,
+  "spread_cost": 0.005,
+  "max_bet_pct": 0.05,
+  "pause_windows_after_loss": 1,
+  "assets": ["BTC", "ETH", "SOL", "XRP"],
+  "data_dir": "data",
+  "show_dashboard": true,
+  "dashboard_refresh_rate": 2.0,
+  "run_analysis": false
+}

@@ -190,11 +190,32 @@ class Application:
             combo_stop_time=self.trading_config.get("combo_stop_time", "t7.5"),
             combo_stop_delta=self.trading_config.get("combo_stop_delta", 0.10),
             combo_xasset_min=self.trading_config.get("combo_xasset_min", 2),
+            triple_prev_thresh=self.trading_config.get("triple_prev_thresh", 0.70),
+            triple_bull_thresh=self.trading_config.get("triple_bull_thresh", 0.55),
+            triple_bear_thresh=self.trading_config.get("triple_bear_thresh", 0.45),
+            triple_entry_time=self.trading_config.get("triple_entry_time", "t5"),
+            triple_exit_time=self.trading_config.get("triple_exit_time", "t12.5"),
+            triple_xasset_min=self.trading_config.get("triple_xasset_min", 3),
+            triple_pm0_bull_min=self.trading_config.get("triple_pm0_bull_min", 0.50),
+            triple_pm0_bear_max=self.trading_config.get("triple_pm0_bear_max", 0.50),
         )
         await self.trader.initialize()
 
         entry_mode = self.trading_config.get("entry_mode", "two_stage")
-        if entry_mode == "accel_dbl":
+        if entry_mode == "triple_filter":
+            logger.info(
+                f"Trading engine initialized (TRIPLE FILTER): "
+                f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
+                f"Prev thresh={self.trading_config.get('triple_prev_thresh', 0.70)}, "
+                f"XAsset min={self.trading_config.get('triple_xasset_min', 3)}, "
+                f"PM0 bull>={self.trading_config.get('triple_pm0_bull_min', 0.50)} "
+                f"bear<={self.trading_config.get('triple_pm0_bear_max', 0.50)}, "
+                f"Entry={self.trading_config.get('triple_entry_time', 't5')} "
+                f"Exit={self.trading_config.get('triple_exit_time', 't12.5')}, "
+                f"Bull>={self.trading_config.get('triple_bull_thresh', 0.55)} "
+                f"Bear<={self.trading_config.get('triple_bear_thresh', 0.45)}"
+            )
+        elif entry_mode == "accel_dbl":
             logger.info(
                 f"Trading engine initialized (ACCEL_DBL): "
                 f"Bankroll=${self.trader.state.current_bankroll:.2f}, "
@@ -267,7 +288,18 @@ class Application:
         try:
             entry_mode = self.trading_config.get("entry_mode", "two_stage")
 
-            if entry_mode == "accel_dbl":
+            if entry_mode == "triple_filter":
+                # TRIPLE: t0 for PM0 check, entry at configured time, exit at configured time
+                entry_t = self.trader._time_to_minutes.get(self.trader.triple_entry_time, 5.0)
+                exit_t = self.trader._time_to_minutes.get(self.trader.triple_exit_time, 12.5)
+
+                if sample.t_minutes == 0.0:
+                    await self.trader.on_sample_at_triple_t0(asset, sample, state)
+                elif sample.t_minutes == entry_t:
+                    await self.trader.on_sample_at_triple_entry(asset, sample, state)
+                elif sample.t_minutes == exit_t:
+                    await self.trader.on_sample_at_triple_exit(asset, sample, state)
+            elif entry_mode == "accel_dbl":
                 # ACCEL_DBL: t0 for acceleration check, entry at configured time, exit at configured time
                 entry_t = self.trader._time_to_minutes.get(self.trader.accel_entry_time, 5.0)
                 exit_t = self.trader._time_to_minutes.get(self.trader.accel_exit_time, 12.5)
