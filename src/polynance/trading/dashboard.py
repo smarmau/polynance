@@ -165,7 +165,8 @@ class TradingDashboard:
         is_consensus = self.trader.entry_mode == "contrarian_consensus"
         is_accel = self.trader.entry_mode == "accel_dbl"
         is_combo = self.trader.entry_mode == "combo_dbl"
-        is_contrarian_family = is_contrarian or is_consensus or is_accel or is_combo
+        is_triple = self.trader.entry_mode == "triple_filter"
+        is_contrarian_family = is_contrarian or is_consensus or is_accel or is_combo or is_triple
         is_two_stage = self.trader.entry_mode == "two_stage"
 
         # Resolution time is at t=15 minutes (900 seconds)
@@ -174,7 +175,10 @@ class TradingDashboard:
 
         if is_contrarian_family:
             # Contrarian-family: entry at configured time, exit at configured time
-            if is_accel:
+            if is_triple:
+                entry_min = self.trader._time_to_minutes.get(self.trader.triple_entry_time, 5.0)
+                exit_min = self.trader._time_to_minutes.get(self.trader.triple_exit_time, 12.5)
+            elif is_accel:
                 entry_min = self.trader._time_to_minutes.get(self.trader.accel_entry_time, 5.0)
                 exit_min = self.trader._time_to_minutes.get(self.trader.accel_exit_time, 12.5)
             elif is_combo:
@@ -270,7 +274,9 @@ class TradingDashboard:
         # Build header content
         title = Text()
         title.append("POLYNANCE TRADING BOT ", style="bold cyan")
-        if is_accel:
+        if is_triple:
+            title.append("(Triple Filter Mode)", style="magenta")
+        elif is_accel:
             title.append("(Accel+DblContrarian Mode)", style="magenta")
         elif is_combo:
             title.append("(Combo+DblContrarian Mode)", style="magenta")
@@ -340,13 +346,15 @@ class TradingDashboard:
         )
 
         # Row 2: Bet sizing and drawdown
-        dd_color = "red" if state.max_drawdown_pct < -10 else "yellow" if state.max_drawdown_pct < -5 else "green"
+        # Use equity-curve-based drawdown from metrics if available (more accurate)
+        dd_pct = self._metrics.get("max_drawdown_pct", state.max_drawdown_pct)
+        dd_color = "red" if dd_pct < -10 else "yellow" if dd_pct < -5 else "green"
 
         grid.add_row(
             Text.assemble(("Current Bet: ", "dim"), (f"${state.current_bet_size:.2f}", "cyan")),
             Text.assemble(("Base Bet: ", "dim"), (f"${state.base_bet_size:.2f}", "dim")),
             Text.assemble(("Peak: ", "dim"), (f"${state.peak_bankroll:,.2f}", "white")),
-            Text.assemble(("Max DD: ", "dim"), (f"{state.max_drawdown_pct:.1f}%", dd_color)),
+            Text.assemble(("Max DD: ", "dim"), (f"{dd_pct:.1f}%", dd_color)),
         )
 
         # Row 3: Today's stats
@@ -533,9 +541,9 @@ class TradingDashboard:
             pnl_color = "green" if total_pnl > 0 else "red" if total_pnl < 0 else "dim"
 
             signal_str = ""
-            if last_signal in ("bull", "bull-contrarian", "bull-consensus", "bull-accel", "bull-combo"):
+            if last_signal in ("bull", "bull-contrarian", "bull-consensus", "bull-accel", "bull-combo", "bull-triple"):
                 signal_str = "[green]BULL[/green]"
-            elif last_signal in ("bear", "bear-contrarian", "bear-consensus", "bear-accel", "bear-combo"):
+            elif last_signal in ("bear", "bear-contrarian", "bear-consensus", "bear-accel", "bear-combo", "bear-triple"):
                 signal_str = "[red]BEAR[/red]"
             elif last_signal and "no-consensus" in last_signal:
                 signal_str = "[yellow]N-CS[/yellow]"
@@ -545,6 +553,8 @@ class TradingDashboard:
                 signal_str = "[yellow]N-CF[/yellow]"
             elif last_signal and "no-t0" in last_signal:
                 signal_str = "[yellow]N-T0[/yellow]"
+            elif last_signal and "pm0-fail" in last_signal:
+                signal_str = "[yellow]PM0F[/yellow]"
             elif last_signal and "filtered" in last_signal:
                 signal_str = "[yellow]FILT[/yellow]"
             elif last_signal and "pending" in last_signal:
@@ -589,11 +599,14 @@ class TradingDashboard:
         is_consensus = self.trader.entry_mode == "contrarian_consensus"
         is_accel = self.trader.entry_mode == "accel_dbl"
         is_combo = self.trader.entry_mode == "combo_dbl"
-        is_contrarian_family = is_contrarian or is_consensus or is_accel or is_combo
+        is_triple = self.trader.entry_mode == "triple_filter"
+        is_contrarian_family = is_contrarian or is_consensus or is_accel or is_combo or is_triple
         is_two_stage = self.trader.entry_mode == "two_stage"
 
         # Determine entry time label for contrarian family
-        if is_accel:
+        if is_triple:
+            entry_t_label = self.trader.triple_entry_time
+        elif is_accel:
             entry_t_label = self.trader.accel_entry_time
         elif is_combo:
             entry_t_label = self.trader.combo_entry_time
@@ -611,10 +624,10 @@ class TradingDashboard:
         table.add_column("Asset", width=5)
 
         if is_contrarian_family:
-            if is_accel or is_combo:
+            if is_accel or is_combo or is_triple:
                 table.add_column("Pv2", justify="right", width=5)
             table.add_column("Prev", justify="right", width=5)
-            if is_accel:
+            if is_accel or is_triple:
                 table.add_column("@t0", justify="right", width=5)
             table.add_column(f"@{entry_t_label}", justify="right", width=5)
         else:
@@ -650,7 +663,9 @@ class TradingDashboard:
 
             if is_contrarian_family:
                 # Determine threshold for this mode
-                if is_accel:
+                if is_triple:
+                    thresh = self.trader.triple_prev_thresh
+                elif is_accel:
                     thresh = self.trader.accel_prev_thresh
                 elif is_combo:
                     thresh = self.trader.combo_prev_thresh
@@ -659,7 +674,7 @@ class TradingDashboard:
 
                 # Previous2 window PM@t12.5 (for double contrarian)
                 prev2_str = None
-                if is_accel or is_combo:
+                if is_accel or is_combo or is_triple:
                     prev2_pm = self.trader._prev2_window_pm.get(asset)
                     if prev2_pm is not None:
                         if prev2_pm >= thresh:
@@ -683,7 +698,7 @@ class TradingDashboard:
                 else:
                     prev_str = "[dim]--[/dim]"
 
-                # t0 price for accel mode
+                # t0 price for accel / triple mode
                 t0_str = None
                 if is_accel:
                     t0_pm = self.trader._accel_t0_pm.get(asset)
@@ -691,6 +706,18 @@ class TradingDashboard:
                         band = self.trader.accel_neutral_band
                         if abs(t0_pm - 0.50) <= band:
                             t0_str = f"[green]{t0_pm:.2f}[/green]"
+                        else:
+                            t0_str = f"[yellow]{t0_pm:.2f}[/yellow]"
+                    else:
+                        t0_str = "[dim]--[/dim]"
+                elif is_triple:
+                    t0_pm = self.trader._triple_t0_pm.get(asset)
+                    if t0_pm is not None:
+                        # Color based on bull/bear confirmation thresholds
+                        if t0_pm >= self.trader.triple_pm0_bull_min:
+                            t0_str = f"[green]{t0_pm:.2f}[/green]"
+                        elif t0_pm <= self.trader.triple_pm0_bear_max:
+                            t0_str = f"[red]{t0_pm:.2f}[/red]"
                         else:
                             t0_str = f"[yellow]{t0_pm:.2f}[/yellow]"
                     else:
@@ -747,8 +774,11 @@ class TradingDashboard:
                 status_str = "[yellow]NO-XA[/yellow]"
             elif last_signal and "no-t0" in str(last_signal):
                 status_str = "[yellow]NO-T0[/yellow]"
+            elif last_signal and "pm0-fail" in str(last_signal):
+                status_str = "[yellow]PM0F[/yellow]"
             elif last_signal and ("contrarian" in str(last_signal) or "consensus" in str(last_signal)
-                                  or "accel" in str(last_signal) or "combo" in str(last_signal)):
+                                  or "accel" in str(last_signal) or "combo" in str(last_signal)
+                                  or "triple" in str(last_signal)):
                 direction = last_signal.split("-")[0]
                 dir_color = "green" if direction == "bull" else "red"
                 status_str = f"[{dir_color}]DONE[/{dir_color}]"
@@ -757,10 +787,10 @@ class TradingDashboard:
 
             if is_contrarian_family:
                 row = [asset]
-                if is_accel or is_combo:
+                if is_accel or is_combo or is_triple:
                     row.append(prev2_str)
                 row.append(prev_str)
-                if is_accel:
+                if is_accel or is_triple:
                     row.append(t0_str)
                 row.extend([entry_str, now_str, status_str])
                 table.add_row(*row)
@@ -769,7 +799,9 @@ class TradingDashboard:
             else:
                 table.add_row(asset, t75_str, now_str, status_str)
 
-        if is_accel:
+        if is_triple:
+            title = "Window Status (Triple Filter)"
+        elif is_accel:
             title = "Window Status (Accel+DblContrarian)"
         elif is_combo:
             title = "Window Status (Combo+DblContrarian)"
@@ -788,7 +820,19 @@ class TradingDashboard:
 
         content = Text()
 
-        if self.trader.entry_mode == "accel_dbl":
+        if self.trader.entry_mode == "triple_filter":
+            content.append("Strategy: ", style="dim")
+            content.append("Triple Filter ", style="magenta bold")
+            content.append(
+                f"Prev>={self.trader.triple_prev_thresh} "
+                f"XA>={self.trader.triple_xasset_min} "
+                f"PM0 B>={self.trader.triple_pm0_bull_min}/R<={self.trader.triple_pm0_bear_max} "
+                f"Bull>={self.trader.triple_bull_thresh} "
+                f"Bear<={self.trader.triple_bear_thresh} "
+                f"({self.trader.triple_entry_time}→{self.trader.triple_exit_time})",
+                style="magenta",
+            )
+        elif self.trader.entry_mode == "accel_dbl":
             content.append("Strategy: ", style="dim")
             content.append("Accel+DblContrarian ", style="magenta bold")
             content.append(

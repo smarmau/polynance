@@ -2155,7 +2155,12 @@ class SimulatedTrader:
     # =========================================================================
 
     async def calculate_metrics(self) -> dict:
-        """Calculate comprehensive trading metrics."""
+        """Calculate comprehensive trading metrics.
+
+        All metrics are computed purely from trade history (matching
+        chart.py methodology) rather than cached sim_state values,
+        which may be stale across sessions/resets.
+        """
         if self.state is None or self.state.total_trades == 0:
             return {}
 
@@ -2164,7 +2169,7 @@ class SimulatedTrader:
         if not trades:
             return {}
 
-        # Basic metrics
+        # --- Compute everything from trade records (like chart.py) ---
         pnls = [t.net_pnl for t in trades if t.net_pnl is not None]
         wins = [t for t in trades if t.outcome == "win"]
         losses = [t for t in trades if t.outcome == "loss"]
@@ -2175,57 +2180,76 @@ class SimulatedTrader:
         import numpy as np
 
         pnl_array = np.array(pnls)
-        win_pnls = [t.net_pnl for t in wins if t.net_pnl is not None]
-        loss_pnls = [t.net_pnl for t in losses if t.net_pnl is not None]
+        total_pnl = float(np.sum(pnl_array))
 
-        # Profit factor
-        gross_wins = sum(p for p in win_pnls if p > 0) if win_pnls else 0
-        gross_losses = abs(sum(p for p in loss_pnls if p < 0)) if loss_pnls else 0
+        # Profit factor (matches chart.py: sum positive win pnls / abs sum negative loss pnls)
+        gross_wins = sum(t.net_pnl for t in wins if t.net_pnl and t.net_pnl > 0)
+        gross_losses = abs(sum(t.net_pnl for t in losses if t.net_pnl and t.net_pnl < 0))
         profit_factor = gross_wins / gross_losses if gross_losses > 0 else float("inf")
 
         # Average win/loss
-        avg_win = np.mean(win_pnls) if win_pnls else 0
-        avg_loss = np.mean(loss_pnls) if loss_pnls else 0
+        win_pnls = [t.net_pnl for t in wins if t.net_pnl is not None]
+        loss_pnls = [t.net_pnl for t in losses if t.net_pnl is not None]
+        avg_win = float(np.mean(win_pnls)) if win_pnls else 0
+        avg_loss = float(np.mean(loss_pnls)) if loss_pnls else 0
+
+        # Win rate from actual trades
+        n_wins = len(wins)
+        n_losses = len(losses)
+        n_total = len(trades)
+        win_rate = n_wins / n_total if n_total > 0 else 0
 
         # Expectancy
-        win_rate = self.state.win_rate
         expectancy = (win_rate * avg_win) + ((1 - win_rate) * avg_loss)
 
-        # Sharpe ratio (annualized for 15-min windows: 96 per day * 252 trading days)
+        # --- Rebuild equity curve from trades (matches chart.py exactly) ---
+        equity = [self.initial_bankroll]
+        for t in trades:
+            if t.bankroll_after is not None:
+                equity.append(t.bankroll_after)
+
+        # Drawdown from equity curve (matches chart.py)
+        peak = self.initial_bankroll
+        drawdowns = []
+        for val in equity:
+            peak = max(peak, val)
+            dd_pct = ((val - peak) / peak) * 100 if peak > 0 else 0
+            drawdowns.append(dd_pct)
+
+        max_dd_pct = min(drawdowns) if drawdowns else 0
+
+        # Max drawdown in dollars (matches chart.py recovery factor calc)
+        max_dd_dollars = min(
+            equity[i] - max(equity[:i + 1]) for i in range(len(equity))
+        )
+
+        # Calmar ratio (matches chart.py: return_pct / |max_dd_pct|)
+        total_return_pct = (total_pnl / self.initial_bankroll) * 100
+        calmar = total_return_pct / abs(max_dd_pct) if max_dd_pct < 0 else 0
+
+        # Recovery factor (matches chart.py: total_pnl / |max_dd_dollars|)
+        recovery_factor = total_pnl / abs(max_dd_dollars) if max_dd_dollars < 0 else float("inf")
+
+        # Sharpe ratio (per-trade, not annualized — avoids inflated values
+        # since the bot doesn't trade every 15-min window)
         if len(pnls) > 1 and np.std(pnl_array) > 0:
-            sharpe = (np.mean(pnl_array) / np.std(pnl_array)) * np.sqrt(252 * 96)
+            sharpe = float(np.mean(pnl_array) / np.std(pnl_array))
         else:
             sharpe = 0
 
-        # Sortino ratio (using downside deviation)
-        downside = [p for p in pnls if p < 0]
-        if downside and np.std(downside) > 0:
-            sortino = (np.mean(pnl_array) / np.std(downside)) * np.sqrt(252 * 96)
+        # Sortino ratio (per-trade, using downside deviation)
+        downside = np.array([p for p in pnls if p < 0])
+        if len(downside) > 0 and np.std(downside) > 0:
+            sortino = float(np.mean(pnl_array) / np.std(downside))
         else:
             sortino = 0
 
-        # Calmar ratio (annualized return / max drawdown)
-        # Return as percentage of initial bankroll, annualized
-        total_return_pct = (self.state.total_pnl / self.initial_bankroll) * 100
-        # Rough annualization based on trades (assuming ~96 trades/day potential)
-        if len(trades) > 0 and abs(self.state.max_drawdown_pct) > 0:
-            calmar = total_return_pct / abs(self.state.max_drawdown_pct)
-        else:
-            calmar = 0
-
-        # Recovery factor (total profit / max drawdown)
-        # How many times over have we "earned back" our worst drop?
-        if abs(self.state.max_drawdown) > 0:
-            recovery_factor = self.state.total_pnl / abs(self.state.max_drawdown)
-        else:
-            recovery_factor = float("inf") if self.state.total_pnl > 0 else 0
-
         return {
-            "total_trades": self.state.total_trades,
-            "total_wins": self.state.total_wins,
-            "total_losses": self.state.total_losses,
-            "win_rate": self.state.win_rate,
-            "total_pnl": self.state.total_pnl,
+            "total_trades": n_total,
+            "total_wins": n_wins,
+            "total_losses": n_losses,
+            "win_rate": win_rate,
+            "total_pnl": total_pnl,
             "avg_pnl": float(np.mean(pnl_array)),
             "profit_factor": profit_factor,
             "avg_win": avg_win,
@@ -2235,8 +2259,8 @@ class SimulatedTrader:
             "sortino_ratio": sortino,
             "calmar_ratio": calmar,
             "recovery_factor": recovery_factor,
-            "max_drawdown": self.state.max_drawdown,
-            "max_drawdown_pct": self.state.max_drawdown_pct,
+            "max_drawdown": max_dd_dollars,
+            "max_drawdown_pct": max_dd_pct,
             "current_win_streak": self.state.current_win_streak,
             "current_loss_streak": self.state.current_loss_streak,
             "max_win_streak": self.state.max_win_streak,
