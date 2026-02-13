@@ -136,6 +136,8 @@ class SimulatedTrader:
         combo_stop_time: str = DEFAULT_COMBO_STOP_TIME,
         combo_stop_delta: float = DEFAULT_COMBO_STOP_DELTA,
         combo_xasset_min: int = DEFAULT_COMBO_XASSET_MIN,
+        # Exchange name (for display)
+        exchange_name: str = "polymarket",
         # Fee model
         fee_model: str = "flat",
         # Bet scaling: increase base_bet every bet_scale_threshold% gain
@@ -182,6 +184,7 @@ class SimulatedTrader:
         self.fee_rate = fee_rate
         self.spread_cost = spread_cost
         self.fee_model = fee_model
+        self.exchange_name = exchange_name
         self.bet_scale_threshold = bet_scale_threshold
         self.bet_scale_increase = bet_scale_increase
         self.bull_threshold = bull_threshold

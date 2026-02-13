@@ -288,7 +288,7 @@ class TradingDashboard:
             title.append("(Dry Run Mode)", style="dim")
 
         # Exchange label
-        ex = "Kalshi" if self.trader.fee_model == "probability_weighted" else "Polymarket"
+        ex = self.trader.exchange_name.capitalize()
         title.append(f"  [{ex}]", style="dim cyan")
 
         # Line 2: Time info

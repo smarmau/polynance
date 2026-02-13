@@ -158,6 +158,7 @@ class Application:
             fee_rate=self.trading_config.get("fee_rate", 0.02),
             spread_cost=self.trading_config.get("spread_cost", 0.006),
             fee_model=self.trading_config.get("fee_model", "flat"),
+            exchange_name=self.trading_config.get("exchange", "polymarket"),
             bull_threshold=self.trading_config.get("bull_threshold", 0.80),
             bear_threshold=self.trading_config.get("bear_threshold", 0.20),
             max_bet_pct=self.trading_config.get("max_bet_pct", 0.05),

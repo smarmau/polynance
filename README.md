@@ -30,7 +30,7 @@ Requires **Python 3.11+**.
 | Polymarket | `"exchange": "polymarket"` | Flat (fee_rate + spread) | Dry-run ready |
 | Kalshi | `"exchange": "kalshi"` | Probability-weighted | Dry-run ready |
 
-Set `"exchange"` and `"fee_model"` in your config JSON. Kalshi requires `KALSHI_API_KEY` and `KALSHI_PRIVATE_KEY` environment variables.
+Set `"exchange"` and `"fee_model"` in your config JSON. Kalshi uses the public API (no authentication required for market data).
 
 Run both exchanges simultaneously with separate configs:
 
@@ -303,7 +303,7 @@ polynance/
 │   │   ├── exchange.py            # ExchangeClient ABC + factory
 │   │   ├── polymarket.py          # Polymarket CLOB API client
 │   │   ├── polymarket_adapter.py  # Polymarket ExchangeClient adapter
-│   │   ├── kalshi_adapter.py      # Kalshi ExchangeClient adapter (via pmxt)
+│   │   ├── kalshi_adapter.py      # Kalshi ExchangeClient adapter (public REST API)
 │   │   └── binance.py             # Binance spot price client
 │   ├── db/
 │   │   ├── database.py            # Per-asset SQLite (samples + windows tables)
@@ -364,7 +364,6 @@ Core:
 - `rich`, `plotext` (terminal UI)
 - `matplotlib`, `seaborn` (charting)
 - `python-dotenv`, `pytz` (utilities)
-- `pmxt` (multi-exchange prediction market abstraction)
 
 Dev (optional):
 - `pytest`, `pytest-asyncio`, `black`, `ruff`
