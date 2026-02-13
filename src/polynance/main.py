@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from .clients.polymarket import PolymarketClient
+from .clients.exchange import ExchangeClient, create_exchange
 from .clients.binance import BinanceClient
 from .db.database import Database
 from .db.models import Window
@@ -54,7 +54,7 @@ class Application:
 
         # Components
         self.databases: Dict[str, Database] = {}
-        self.polymarket: PolymarketClient = None
+        self.exchange: ExchangeClient = None
         self.binance: BinanceClient = None
         self.sampler: Sampler = None
         self.dashboard: TerminalDashboard = None
@@ -86,8 +86,9 @@ class Application:
             logger.info(f"Initialized database for {asset}: {db_path}")
 
         # Initialize API clients
-        self.polymarket = PolymarketClient()
-        await self.polymarket.__aenter__()
+        exchange_name = self.trading_config.get("exchange", "polymarket")
+        self.exchange = create_exchange(exchange_name)
+        await self.exchange.connect()
 
         self.binance = BinanceClient()
         await self.binance.__aenter__()
@@ -103,7 +104,7 @@ class Application:
         needs_callback = self.run_analysis or self.enable_trading
         self.sampler = Sampler(
             db=DatabaseRouter(self.databases),
-            polymarket=self.polymarket,
+            exchange=self.exchange,
             binance=self.binance,
             assets=self.assets,
             on_window_complete=self._on_window_complete if needs_callback else None,
@@ -156,9 +157,12 @@ class Application:
             base_bet=self.trading_config.get("base_bet", 25.0),
             fee_rate=self.trading_config.get("fee_rate", 0.02),
             spread_cost=self.trading_config.get("spread_cost", 0.006),
+            fee_model=self.trading_config.get("fee_model", "flat"),
             bull_threshold=self.trading_config.get("bull_threshold", 0.80),
             bear_threshold=self.trading_config.get("bear_threshold", 0.20),
             max_bet_pct=self.trading_config.get("max_bet_pct", 0.05),
+            bet_scale_threshold=self.trading_config.get("bet_scale_threshold", 0.0),
+            bet_scale_increase=self.trading_config.get("bet_scale_increase", 0.0),
             pause_windows_after_loss=self.trading_config.get("pause_windows_after_loss", 2),
             growth_per_win=self.trading_config.get("growth_per_win", 0.10),
             max_bet_multiplier=self.trading_config.get("max_bet_multiplier", 2.0),
@@ -452,15 +456,15 @@ class Application:
 
         # Close API clients
         try:
-            if self.polymarket:
+            if self.exchange:
                 await asyncio.wait_for(
-                    self.polymarket.__aexit__(None, None, None),
+                    self.exchange.close(),
                     timeout=2.0
                 )
         except asyncio.TimeoutError:
-            logger.warning("Polymarket client close timed out")
+            logger.warning("Exchange client close timed out")
         except Exception as e:
-            logger.warning(f"Error closing Polymarket client: {e}")
+            logger.warning(f"Error closing exchange client: {e}")
 
         try:
             if self.binance:

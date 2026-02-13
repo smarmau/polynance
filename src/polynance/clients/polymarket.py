@@ -9,6 +9,8 @@ from typing import Optional, List, Dict
 
 import aiohttp
 
+from .exchange import MarketInfo, MarketPrice
+
 logger = logging.getLogger(__name__)
 
 # Asset slug prefixes for 15-min markets (used to construct epoch-based URLs)
@@ -18,34 +20,6 @@ CRYPTO_15MIN_SLUGS = {
     "SOL": "sol-updown-15m",
     "XRP": "xrp-updown-15m",
 }
-
-
-@dataclass
-class MarketInfo:
-    """Information about a 15-min prediction market."""
-
-    condition_id: str
-    question: str
-    asset: str  # BTC, ETH, etc.
-    yes_token_id: str
-    no_token_id: str
-    end_date: Optional[datetime] = None
-    active: bool = True
-
-
-@dataclass
-class MarketPrice:
-    """Current market price data."""
-
-    timestamp: datetime
-    yes_price: float
-    no_price: float
-    yes_bid: float
-    yes_ask: float
-    no_bid: float
-    no_ask: float
-    spread: float  # yes_ask - yes_bid
-    midpoint: float  # (yes_bid + yes_ask) / 2
 
 
 @dataclass

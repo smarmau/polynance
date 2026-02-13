@@ -1,4 +1,6 @@
 {
+  "exchange": "polymarket",
+  "fee_model": "flat",
   "entry_mode": "triple_filter",
   "triple_prev_thresh": 0.70,
   "triple_bull_thresh": 0.55,
@@ -13,6 +15,8 @@
   "fee_rate": 0.001,
   "spread_cost": 0.005,
   "max_bet_pct": 0.05,
+  "bet_scale_threshold": 1.0,
+  "bet_scale_increase": 0.20,
   "pause_windows_after_loss": 1,
   "assets": ["BTC", "ETH", "SOL", "XRP"],
   "data_dir": "data",

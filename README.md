@@ -1,8 +1,8 @@
 # Polynance
 
-Simulated trading bot for Polymarket 15-minute crypto prediction markets (BTC, ETH, SOL, XRP).
+Simulated trading bot for 15-minute crypto prediction markets (BTC, ETH, SOL, XRP).
 
-Collects real-time Polymarket prediction prices and Binance spot prices every 30 seconds, builds 15-minute windows, and executes simulated trades using configurable contrarian/momentum strategies.
+Supports **Polymarket** and **Kalshi** exchanges via a unified abstraction layer. Collects real-time prediction prices and Binance spot prices every 30 seconds, builds 15-minute windows, and executes simulated trades using configurable contrarian/momentum strategies.
 
 ## Quick Start
 
@@ -23,9 +23,25 @@ polynance-trade
 
 Requires **Python 3.11+**.
 
+## Exchange Support
+
+| Exchange | Config Value | Fee Model | Status |
+|----------|-------------|-----------|--------|
+| Polymarket | `"exchange": "polymarket"` | Flat (fee_rate + spread) | Dry-run ready |
+| Kalshi | `"exchange": "kalshi"` | Probability-weighted | Dry-run ready |
+
+Set `"exchange"` and `"fee_model"` in your config JSON. Kalshi requires `KALSHI_API_KEY` and `KALSHI_PRIVATE_KEY` environment variables.
+
+Run both exchanges simultaneously with separate configs:
+
+```bash
+polynance-trade --config config/config_consensus.json          # Polymarket
+polynance-trade --config config/config_consensus_kalshi.json   # Kalshi
+```
+
 ## Entry Modes
 
-All strategies use **fixed bet sizing** ($50 per trade, capped at 5% of bankroll).
+All strategies use **fixed bet sizing** ($50 per trade, capped at 5% of bankroll), with optional **bet scaling** to increase bet size as bankroll grows.
 
 Set the active strategy via `entry_mode` in `config/config.json`:
 
@@ -39,6 +55,7 @@ These strategies bet on mean-reversion after one or more strong previous windows
 | `contrarian_consensus` | Contrarian + cross-asset | Like contrarian, but N-of-4 assets must show same strong prev signal |
 | `accel_dbl` | Double contrarian + neutral acceleration | **Two** consecutive strong prev windows + t0 must be near 0.50 (neutral) |
 | `combo_dbl` | Double contrarian + cross-asset + stop-loss | **Two** consecutive strong prev windows + 2+ other assets also double-strong, with stop-loss |
+| `triple_filter` | Double contrarian + cross-asset + PM t0 confirm | **Two** consecutive strong prev windows + N assets double-strong + PM t0 confirms direction |
 
 #### How Contrarian Works
 
@@ -60,6 +77,13 @@ Adds cross-asset confirmation and risk management:
 - **Cross-asset filter**: at least `combo_xasset_min` other assets must also be double-strong in the same direction
 - **Stop-loss**: at `combo_stop_time` (default t=7.5), if the position has moved against by >= `combo_stop_delta`, exit early
 
+#### TRIPLE_FILTER (Triple Confirmation)
+
+The most selective strategy. Requires all three filters to pass:
+- **Double contrarian**: two consecutive strong prev windows in the same direction
+- **Cross-asset consensus**: at least `triple_xasset_min` assets must be double-strong
+- **PM t0 confirmation**: pm_yes at t=0 must confirm the expected direction (>= `triple_pm0_bull_min` for bull, <= `triple_pm0_bear_max` for bear)
+
 ### Legacy Modes
 
 | Mode | Description |
@@ -79,8 +103,12 @@ polynance-trade --init-config
 
 ```jsonc
 {
+  // Exchange
+  "exchange": "polymarket",         // "polymarket" or "kalshi"
+  "fee_model": "flat",              // "flat" (polymarket) or "probability_weighted" (kalshi)
+
   // Strategy selection
-  "entry_mode": "accel_dbl",        // "contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "two_stage", "single"
+  "entry_mode": "accel_dbl",        // "contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter", "two_stage", "single"
 
   // --- Contrarian base settings (used by all contrarian-family modes) ---
   "contrarian_prev_thresh": 0.75,   // prev window pm@t12.5 must be >= this (or <= 1-this) to be "strong"
@@ -112,6 +140,16 @@ polynance-trade --init-config
   "combo_stop_delta": 0.10,         // exit early if position moved against by this much
   "combo_xasset_min": 2,            // min other assets that must also be double-strong
 
+  // --- TRIPLE_FILTER settings ---
+  "triple_prev_thresh": 0.70,        // prev window strength (double required)
+  "triple_bull_thresh": 0.55,
+  "triple_bear_thresh": 0.45,
+  "triple_entry_time": "t5",
+  "triple_exit_time": "t12.5",
+  "triple_xasset_min": 3,            // min assets that must be double-strong
+  "triple_pm0_bull_min": 0.50,       // pm t0 must be >= this for bull
+  "triple_pm0_bear_max": 0.50,       // pm t0 must be <= this for bear
+
   // --- Two-stage / Single mode settings ---
   "signal_threshold_bull": 0.70,
   "signal_threshold_bear": 0.30,
@@ -126,6 +164,10 @@ polynance-trade --init-config
   "fee_rate": 0.001,                // 0.1% taker fee
   "spread_cost": 0.005,             // 0.5% spread estimate
   "max_bet_pct": 0.05,              // max 5% of bankroll per trade
+
+  // --- Bet scaling (optional) ---
+  "bet_scale_threshold": 1.0,       // scale up every 100% gain (0 = disabled)
+  "bet_scale_increase": 0.20,       // +20% per threshold step
 
   // --- Trading mechanics ---
   "min_trajectory": 0.20,           // minimum pm move from t0 to entry (trajectory filter)
@@ -258,7 +300,10 @@ polynance/
 │   ├── main.py                    # Application orchestrator, sample routing
 │   ├── sampler.py                 # 30-sec data collection, window finalization
 │   ├── clients/
+│   │   ├── exchange.py            # ExchangeClient ABC + factory
 │   │   ├── polymarket.py          # Polymarket CLOB API client
+│   │   ├── polymarket_adapter.py  # Polymarket ExchangeClient adapter
+│   │   ├── kalshi_adapter.py      # Kalshi ExchangeClient adapter (via pmxt)
 │   │   └── binance.py             # Binance spot price client
 │   ├── db/
 │   │   ├── database.py            # Per-asset SQLite (samples + windows tables)
@@ -285,7 +330,10 @@ polynance/
 ├── scripts/
 │   └── backfill_db.py             # Database migration/backfill utility
 ├── config/
-│   └── config.json                # Active trading configuration
+│   ├── config.json                # Default config (accel_dbl, Polymarket)
+│   ├── config_consensus.json      # Contrarian consensus (Polymarket)
+│   ├── config_consensus_kalshi.json # Contrarian consensus (Kalshi)
+│   └── config_triple.json         # Triple filter (Polymarket)
 ├── data/                          # SQLite databases (gitignored)
 ├── pyproject.toml                 # Package config and dependencies
 └── README.md
@@ -316,6 +364,7 @@ Core:
 - `rich`, `plotext` (terminal UI)
 - `matplotlib`, `seaborn` (charting)
 - `python-dotenv`, `pytz` (utilities)
+- `pmxt` (multi-exchange prediction market abstraction)
 
 Dev (optional):
 - `pytest`, `pytest-asyncio`, `black`, `ruff`
@@ -324,7 +373,7 @@ Install dev deps: `pip install -e ".[dev]"`
 
 ## Disclaimer
 
-This is a **simulation only**. No real trades are executed. Past performance does not guarantee future results. Prediction markets carry significant risk.
+This is a **simulation only**. No real trades are executed on any exchange. Past performance does not guarantee future results. Prediction markets carry significant risk.
 
 ## License
 

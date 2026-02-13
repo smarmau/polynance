@@ -1,6 +1,6 @@
 {
-  "exchange": "polymarket",
-  "fee_model": "flat",
+  "exchange": "kalshi",
+  "fee_model": "probability_weighted",
   "entry_mode": "contrarian_consensus",
   "contrarian_prev_thresh": 0.80,
   "contrarian_bull_thresh": 0.50,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Callable, List, Dict, Tuple
 
-from .clients.polymarket import PolymarketClient, MarketInfo, MarketPrice
+from .clients.exchange import ExchangeClient, MarketInfo, MarketPrice
 from .clients.binance import BinanceClient, SpotPrice
 from .db.database import Database
 from .db.models import Sample, Window
@@ -75,14 +75,14 @@ class Sampler:
     def __init__(
         self,
         db: Database,
-        polymarket: PolymarketClient,
+        exchange: ExchangeClient,
         binance: BinanceClient,
         assets: List[str],
         on_window_complete: Optional[Callable] = None,
         on_sample_collected: Optional[Callable] = None,
     ):
         self.db = db
-        self.polymarket = polymarket
+        self.exchange = exchange
         self.binance = binance
         self.assets = assets
         self.on_window_complete = on_window_complete
@@ -113,7 +113,7 @@ class Sampler:
         """Initialize the sampler by finding active markets."""
         logger.info(f"Initializing sampler for assets: {self.assets}")
 
-        markets = await self.polymarket.find_active_15min_markets(self.assets)
+        markets = await self.exchange.find_active_15min_markets(self.assets)
 
         for market in markets:
             if market.asset in self.states:
@@ -187,7 +187,7 @@ class Sampler:
                 # IMPORTANT: Fetch new market for this window!
                 # Each 15-min window has a unique market with different epoch
                 logger.info(f"[{asset}] Fetching market for new window starting at {window_start.strftime('%H:%M')}")
-                markets = await self.polymarket.find_active_15min_markets([asset])
+                markets = await self.exchange.find_active_15min_markets([asset])
 
                 if markets and len(markets) > 0:
                     state.market = markets[0]
@@ -260,13 +260,13 @@ class Sampler:
 
             logger.info(f"[{asset}] Collecting sample at t={sample_point}...")
 
-            # Get Polymarket price
-            logger.debug(f"[{asset}] Fetching Polymarket price...")
-            pm_price = await self.polymarket.get_market_price(state.market)
+            # Get market price
+            logger.debug(f"[{asset}] Fetching market price...")
+            pm_price = await self.exchange.get_market_price(state.market)
             if pm_price is None:
-                logger.warning(f"[{asset}] Failed to get Polymarket price")
+                logger.warning(f"[{asset}] Failed to get market price")
                 return False
-            logger.debug(f"[{asset}] Got Polymarket price: YES={pm_price.yes_price:.3f}")
+            logger.debug(f"[{asset}] Got market price: YES={pm_price.yes_price:.3f}")
 
             # Get spot price
             logger.debug(f"[{asset}] Fetching Binance spot price...")

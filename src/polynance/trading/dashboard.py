@@ -287,6 +287,10 @@ class TradingDashboard:
         else:
             title.append("(Dry Run Mode)", style="dim")
 
+        # Exchange label
+        ex = "Kalshi" if self.trader.fee_model == "probability_weighted" else "Polymarket"
+        title.append(f"  [{ex}]", style="dim cyan")
+
         # Line 2: Time info
         line2 = Text()
         line2.append(f"\n  UTC: {now.strftime('%Y-%m-%d %H:%M:%S')}  ", style="white")
@@ -352,7 +356,13 @@ class TradingDashboard:
 
         grid.add_row(
             Text.assemble(("Current Bet: ", "dim"), (f"${state.current_bet_size:.2f}", "cyan")),
-            Text.assemble(("Base Bet: ", "dim"), (f"${state.base_bet_size:.2f}", "dim")),
+            Text.assemble(
+                ("Base Bet: ", "dim"),
+                (f"${state.base_bet_size:.2f}", "dim"),
+                (f" (scaled ${self.trader._get_scaled_bet():.2f})", "cyan")
+                if self.trader.bet_scale_threshold > 0
+                else ("", "dim"),
+            ),
             Text.assemble(("Peak: ", "dim"), (f"${state.peak_bankroll:,.2f}", "white")),
             Text.assemble(("Max DD: ", "dim"), (f"{dd_pct:.1f}%", dd_color)),
         )
@@ -900,7 +910,15 @@ class TradingDashboard:
         content.append(f"{self.trader.fee_rate*100:.1f}% + {self.trader.spread_cost*100:.1f}% spread", style="cyan")
         content.append("  |  ", style="dim")
         content.append("Sizing: ", style="dim")
-        content.append(f"Fixed ${self.trader.base_bet:.0f}", style="cyan")
+        if self.trader.bet_scale_threshold > 0:
+            scaled = self.trader._get_scaled_bet()
+            content.append(
+                f"${self.trader.base_bet:.0f} → ${scaled:.0f} "
+                f"(+{self.trader.bet_scale_increase*100:.0f}%/{self.trader.bet_scale_threshold*100:.0f}%)",
+                style="cyan",
+            )
+        else:
+            content.append(f"Fixed ${self.trader.base_bet:.0f}", style="cyan")
         content.append("  |  ", style="dim")
         content.append("Ctrl+C", style="bold")
         content.append(" to exit", style="dim")

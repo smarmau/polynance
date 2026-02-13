@@ -1,6 +1,7 @@
 """Core simulated trading engine."""
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
 
@@ -135,6 +136,11 @@ class SimulatedTrader:
         combo_stop_time: str = DEFAULT_COMBO_STOP_TIME,
         combo_stop_delta: float = DEFAULT_COMBO_STOP_DELTA,
         combo_xasset_min: int = DEFAULT_COMBO_XASSET_MIN,
+        # Fee model
+        fee_model: str = "flat",
+        # Bet scaling: increase base_bet every bet_scale_threshold% gain
+        bet_scale_threshold: float = 0.0,  # 0 = disabled, e.g. 1.0 = every 100% gain
+        bet_scale_increase: float = 0.0,   # e.g. 0.20 = +20% per threshold step
         # Triple filter
         triple_prev_thresh: float = DEFAULT_TRIPLE_PREV_THRESH,
         triple_bull_thresh: float = DEFAULT_TRIPLE_BULL_THRESH,
@@ -175,6 +181,9 @@ class SimulatedTrader:
         self.base_bet = base_bet
         self.fee_rate = fee_rate
         self.spread_cost = spread_cost
+        self.fee_model = fee_model
+        self.bet_scale_threshold = bet_scale_threshold
+        self.bet_scale_increase = bet_scale_increase
         self.bull_threshold = bull_threshold
         self.bear_threshold = bear_threshold
         self.max_bet_pct = max_bet_pct
@@ -317,8 +326,8 @@ class SimulatedTrader:
             # Recalculate bet size from win streak (handles sizer changes)
             old_bet = self.state.current_bet_size
             if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
-                # Fixed sizing for contrarian-family modes
-                self.state.current_bet_size = self.base_bet
+                # Fixed sizing for contrarian-family modes (with bet scaling)
+                self.state.current_bet_size = self._get_scaled_bet()
             else:
                 self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
                     self.state.current_win_streak,
@@ -361,6 +370,56 @@ class SimulatedTrader:
                 logger.info(f"Resolved {resolved_count} trade(s) that completed while offline")
             if self.open_trades:
                 logger.info(f"Keeping {len(self.open_trades)} trade(s) as open positions")
+
+    def _get_scaled_bet(self) -> float:
+        """Get the current base bet, scaled up based on bankroll growth.
+
+        If bet_scale_threshold > 0, for every threshold% the bankroll has grown
+        above initial_bankroll, increase base_bet by bet_scale_increase%.
+
+        Example: $1000 start, $50 bet, threshold=1.0 (100%), increase=0.20 (20%)
+          - bankroll $1500 → 0 steps → $50
+          - bankroll $2000 → 1 step  → $60
+          - bankroll $3000 → 2 steps → $72
+        """
+        if self.bet_scale_threshold <= 0 or self.bet_scale_increase <= 0:
+            return self.base_bet
+
+        bankroll = self.state.current_bankroll if self.state else self.initial_bankroll
+        gain_pct = (bankroll - self.initial_bankroll) / self.initial_bankroll
+        if gain_pct <= 0:
+            return self.base_bet
+
+        steps = int(gain_pct / self.bet_scale_threshold)
+        scaled = self.base_bet * (1 + self.bet_scale_increase) ** steps
+        return round(scaled, 2)
+
+    def _calculate_fees(
+        self, entry_contract: float, exit_contract: float, n_contracts: float, bet_size: float
+    ) -> float:
+        """Calculate total fees for a trade based on the configured fee model.
+
+        Args:
+            entry_contract: Contract price at entry (0-1)
+            exit_contract: Contract price at exit (0-1)
+            n_contracts: Number of contracts traded
+            bet_size: Dollar bet size
+
+        Returns:
+            Total fees in dollars.
+        """
+        if self.fee_model == "probability_weighted":
+            # Kalshi: ceil(0.07 * contracts * price * (1-price)) per side, in cents
+            entry_fee = math.ceil(0.07 * n_contracts * entry_contract * (1 - entry_contract) * 100) / 100
+            exit_fee = math.ceil(0.07 * n_contracts * exit_contract * (1 - exit_contract) * 100) / 100
+            return entry_fee + exit_fee
+        else:
+            # Flat model (Polymarket): fee_rate on contract premium + spread on trade value
+            entry_fee = entry_contract * n_contracts * self.fee_rate
+            exit_fee = exit_contract * n_contracts * self.fee_rate
+            entry_spread = self.spread_cost * bet_size
+            exit_spread = self.spread_cost * (n_contracts * exit_contract)
+            return entry_fee + exit_fee + entry_spread + exit_spread
 
     async def on_sample_at_signal(self, asset: str, sample, state):
         """Handle sample at t=7.5 - check for initial signal (two-stage) or direct entry (single).
@@ -451,7 +510,7 @@ class SimulatedTrader:
             self._last_signals[asset] = direction
 
             # Fixed bet size
-            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
 
             # Compute signal metadata
             _spot_vel = sample.spot_price_change_from_open
@@ -623,7 +682,7 @@ class SimulatedTrader:
             self._last_signals[asset] = direction
 
             # Fixed bet size
-            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
 
             # Compute signal metadata
             _spot_vel = sample.spot_price_change_from_open
@@ -765,7 +824,7 @@ class SimulatedTrader:
                 entry_price = 1.0 - pm_yes  # buying NO
 
             # Fixed bet size
-            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
 
             # Compute signal metadata
             _spot_vel = sample.spot_price_change_from_open
@@ -848,12 +907,8 @@ class SimulatedTrader:
             n_contracts = trade.bet_size / entry_contract
             gross_pnl = n_contracts * (exit_contract - entry_contract)
 
-            # Double fees: entry + exit
-            entry_fee = entry_contract * n_contracts * self.fee_rate
-            exit_fee = exit_contract * n_contracts * self.fee_rate
-            entry_spread = self.spread_cost * trade.bet_size
-            exit_spread = self.spread_cost * (n_contracts * exit_contract)
-            total_fees = entry_fee + exit_fee + entry_spread + exit_spread
+            # Calculate fees using configured fee model
+            total_fees = self._calculate_fees(entry_contract, exit_contract, n_contracts, trade.bet_size)
 
             net_pnl = gross_pnl - total_fees
 
@@ -889,7 +944,7 @@ class SimulatedTrader:
 
             # Update bet size (fixed for contrarian-family, dynamic for others)
             if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
-                self.state.current_bet_size = self.base_bet
+                self.state.current_bet_size = self._get_scaled_bet()
             else:
                 self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
                     self.state.current_win_streak,
@@ -917,8 +972,8 @@ class SimulatedTrader:
             trade.exit_price = pm_yes  # store the pm_yes at exit for reference
             trade.outcome = "win" if won else "loss"
             trade.gross_pnl = gross_pnl
-            trade.fee_paid = entry_fee + exit_fee
-            trade.spread_cost = entry_spread + exit_spread
+            trade.fee_paid = total_fees
+            trade.spread_cost = 0.0
             trade.net_pnl = net_pnl
             trade.bankroll_after = self.state.current_bankroll
             trade.drawdown = drawdown
@@ -1142,7 +1197,7 @@ class SimulatedTrader:
 
             # Fixed bet size
             bet_size = min(
-                self.base_bet,
+                self._get_scaled_bet(),
                 self.state.current_bankroll * self.max_bet_pct,
             )
 
@@ -1273,7 +1328,7 @@ class SimulatedTrader:
             else:
                 entry_price = 1.0 - pm_yes
 
-            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
 
             # Signal metadata
             _spot_vel = sample.spot_price_change_from_open
@@ -1457,7 +1512,7 @@ class SimulatedTrader:
             # Store entry pm_yes for stop-loss delta check
             self._combo_entry_pm[asset] = pm_yes
 
-            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
 
             # Signal metadata
             prev2 = self._prev2_window_pm.get(asset, 0)
@@ -1729,7 +1784,7 @@ class SimulatedTrader:
             else:
                 entry_price = 1.0 - pm_yes
 
-            bet_size = min(self.base_bet, self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
 
             # Signal metadata
             prev2 = self._prev2_window_pm.get(asset, 0)
@@ -1884,38 +1939,18 @@ class SimulatedTrader:
             won = actual_outcome == "down"
 
         # Calculate P&L
-        # Polymarket fee: 0.1% (10 bps) on total contract premium (all trades)
-        # Spread: estimated market impact/slippage (all trades)
-
-        # Contract premium = entry_price * bet_size (what we paid for contracts)
-        contract_premium = trade.entry_price * trade.bet_size
-
-        # Fee applies to contract premium on all trades (not just profits)
-        fee = contract_premium * self.fee_rate
-
-        # Spread cost applies to bet size (all trades)
-        spread_fee = self.spread_cost * trade.bet_size
+        n_contracts = trade.bet_size / trade.entry_price if trade.entry_price > 0.001 else 0
 
         if won:
-            # Profit calculation
-            if trade.direction == "bull":
-                # Buy YES at entry_price, receive $1 if wins
-                gross_profit = (1 - trade.entry_price) * trade.bet_size
-            else:
-                # Buy NO, entry_price is (1 - pm_yes), win means we get $1
-                # profit = (1 - entry_price) * bet_size
-                gross_profit = (1 - trade.entry_price) * trade.bet_size
+            gross_profit = (1 - trade.entry_price) * trade.bet_size
         else:
-            # Loss calculation
-            if trade.direction == "bull":
-                # Lose entry price (the YES price we paid)
-                gross_profit = -trade.entry_price * trade.bet_size
-            else:
-                # Lose entry price (the NO price we paid, which is 1 - pm_yes)
-                gross_profit = -trade.entry_price * trade.bet_size
+            gross_profit = -trade.entry_price * trade.bet_size
 
-        # Net P&L = gross - fee - spread
-        net_pnl = gross_profit - fee - spread_fee
+        # Fees: at resolution there's no exit trade, so exit_contract = 1.0 (win) or 0.0 (loss)
+        exit_contract = 1.0 if won else 0.0
+        total_fees = self._calculate_fees(trade.entry_price, exit_contract, n_contracts, trade.bet_size)
+
+        net_pnl = gross_profit - total_fees
 
         # Update portfolio state
         self.state.current_bankroll += net_pnl
@@ -1947,7 +1982,7 @@ class SimulatedTrader:
 
         # Update bet size for next trade based on new win streak
         if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
-            self.state.current_bet_size = self.base_bet
+            self.state.current_bet_size = self._get_scaled_bet()
         else:
             # SlowGrowthSizer uses win streak count, not previous bet
             self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
@@ -1978,8 +2013,8 @@ class SimulatedTrader:
         trade.exit_price = window.spot_close
         trade.outcome = "win" if won else "loss"
         trade.gross_pnl = gross_profit
-        trade.fee_paid = fee
-        trade.spread_cost = spread_fee
+        trade.fee_paid = total_fees
+        trade.spread_cost = 0.0
         trade.net_pnl = net_pnl
         trade.bankroll_after = self.state.current_bankroll
         trade.drawdown = drawdown
@@ -2087,8 +2122,12 @@ class SimulatedTrader:
             "entry_mode": self.entry_mode,
             "initial_bankroll": self.initial_bankroll,
             "base_bet": self.base_bet,
+            "scaled_bet": self._get_scaled_bet(),
+            "bet_scale_threshold": self.bet_scale_threshold,
+            "bet_scale_increase": self.bet_scale_increase,
             "fee_rate": self.fee_rate,
             "spread_cost": self.spread_cost,
+            "fee_model": self.fee_model,
             "bull_threshold": self.bull_threshold,
             "bear_threshold": self.bear_threshold,
             "signal_threshold_bull": self.signal_threshold_bull,

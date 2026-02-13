@@ -1,6 +1,12 @@
-"""API clients for Polymarket and price feeds."""
+"""API clients for prediction markets and price feeds."""
 
-from .polymarket import PolymarketClient
+from .exchange import ExchangeClient, MarketInfo, MarketPrice, create_exchange
 from .binance import BinanceClient
 
-__all__ = ["PolymarketClient", "BinanceClient"]
+__all__ = [
+    "ExchangeClient",
+    "MarketInfo",
+    "MarketPrice",
+    "create_exchange",
+    "BinanceClient",
+]

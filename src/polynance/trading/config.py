@@ -16,6 +16,12 @@ DEFAULT_CONFIG_PATH = Path("config/config.json")
 class TradingConfig:
     """Trading configuration settings."""
 
+    # Exchange: "polymarket" or "kalshi"
+    exchange: str = "polymarket"
+
+    # Fee model: "flat" (polymarket) or "probability_weighted" (kalshi)
+    fee_model: str = "flat"
+
     # Entry mode: "two_stage", "single", "contrarian", "contrarian_consensus",
     #              "accel_dbl", "combo_dbl", or "triple_filter"
     # - two_stage: signal at t=7.5, confirm at t=10, hold to resolution
@@ -98,6 +104,10 @@ class TradingConfig:
     max_bet_multiplier: float = 2.0  # Cap at 2x base bet
     max_bet_pct: float = 0.05  # 5% of bankroll
 
+    # Bet scaling: step-increase base_bet as bankroll grows
+    bet_scale_threshold: float = 0.0  # 0=disabled, 1.0=every 100% gain
+    bet_scale_increase: float = 0.0   # 0.20 = +20% per threshold step
+
     # Signal quality filter
     min_trajectory: float = 0.20  # Min PM price movement from t=0 to entry
 
@@ -124,6 +134,8 @@ class TradingConfig:
     def to_trading_config(self) -> dict:
         """Convert to trading_config dict for Application."""
         return {
+            "exchange": self.exchange,
+            "fee_model": self.fee_model,
             "entry_mode": self.entry_mode,
             "signal_threshold_bull": self.signal_threshold_bull,
             "signal_threshold_bear": self.signal_threshold_bear,
@@ -136,6 +148,8 @@ class TradingConfig:
             "bull_threshold": self.bull_threshold,
             "bear_threshold": self.bear_threshold,
             "max_bet_pct": self.max_bet_pct,
+            "bet_scale_threshold": self.bet_scale_threshold,
+            "bet_scale_increase": self.bet_scale_increase,
             "pause_windows_after_loss": self.pause_windows_after_loss,
             "growth_per_win": self.growth_per_win,
             "max_bet_multiplier": self.max_bet_multiplier,
