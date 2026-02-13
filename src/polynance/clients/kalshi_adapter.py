@@ -41,10 +41,12 @@ class KalshiAdapter(ExchangeClient):
         private_key = os.environ.get("KALSHI_PRIVATE_KEY")
 
         if not api_key or not private_key:
-            raise RuntimeError(
-                "Kalshi credentials not found. Set KALSHI_API_KEY and "
-                "KALSHI_PRIVATE_KEY environment variables."
+            logger.warning(
+                "Kalshi credentials not set (KALSHI_API_KEY / KALSHI_PRIVATE_KEY). "
+                "Running in dry-run mode — market discovery and pricing will be unavailable."
             )
+            self._exchange = None
+            return
 
         self._exchange = pmxt.Kalshi(
             api_key=api_key,
@@ -68,7 +70,8 @@ class KalshiAdapter(ExchangeClient):
         active 15-minute binary up/down markets matching the requested assets.
         """
         if not self._exchange:
-            raise RuntimeError("Kalshi client not connected. Call connect() first.")
+            logger.warning("Kalshi client not connected (no credentials). Skipping market discovery.")
+            return []
 
         markets_found = []
 
