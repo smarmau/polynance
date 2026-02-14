@@ -1,4 +1,4 @@
-"""Data models for simulated trading."""
+"""Data models for simulated and live trading."""
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -213,3 +213,129 @@ class PerAssetStats:
         if self.trades == 0:
             return 0.0
         return self.wins / self.trades
+
+
+@dataclass
+class LiveTrade:
+    """Record of an actual live trade placed on an exchange.
+
+    Tracks real order IDs, actual fill prices, and actual fees from the exchange.
+    This is the source of truth for P&L when live_trading=True — the sim_trades
+    table continues to run in parallel with estimated values.
+
+    Lifecycle:
+        1. Entry order placed → status='entry_placed'
+        2. Entry order filled → status='open', entry_fill_price/entry_fee populated
+        3. Exit order placed  → status='exit_placed'
+        4. Exit order filled  → status='closed', exit_fill_price/exit_fee populated, P&L calculated
+        5. Resolution (binary) → status='settled', P&L from binary payout
+    """
+
+    # Trade identification
+    trade_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    sim_trade_id: str = ""  # Links to the parallel SimulatedTrade
+    window_id: str = ""
+    asset: str = ""
+
+    # Trade direction and sizing
+    direction: Literal["bull", "bear"] = "bull"
+    entry_mode: Optional[str] = None
+    bet_size: float = 0.0  # Dollar amount
+
+    # Entry order (from exchange)
+    entry_order_id: Optional[str] = None
+    entry_time: Optional[datetime] = None
+    entry_price_requested: float = 0.0  # Limit price we asked for
+    entry_fill_price: Optional[float] = None  # Actual fill price from exchange
+    entry_contracts: Optional[float] = None  # Actual contracts filled
+    entry_fee: Optional[float] = None  # Actual fee charged by exchange
+
+    # Exit order (from exchange)
+    exit_order_id: Optional[str] = None
+    exit_time: Optional[datetime] = None
+    exit_price_requested: Optional[float] = None  # Limit price we asked for
+    exit_fill_price: Optional[float] = None  # Actual fill price from exchange
+    exit_contracts: Optional[float] = None  # Actual contracts sold
+    exit_fee: Optional[float] = None  # Actual fee charged by exchange
+
+    # P&L (calculated from actual fills)
+    gross_pnl: Optional[float] = None
+    total_fees: Optional[float] = None  # entry_fee + exit_fee
+    net_pnl: Optional[float] = None
+    outcome: Literal["win", "loss", "pending"] = "pending"
+
+    # Status tracking
+    status: str = "entry_placed"  # entry_placed, open, exit_placed, closed, settled, failed
+
+    # Metadata
+    exchange: str = "polymarket"
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Optional[datetime] = None
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in ("entry_placed", "open")
+
+    @property
+    def is_closed(self) -> bool:
+        return self.status in ("closed", "settled")
+
+    def calculate_pnl(self):
+        """Calculate P&L from actual fill data.
+
+        For early exit (contrarian-family): P&L = contracts * (exit - entry) - fees
+        For binary resolution: P&L = contracts * (payout - entry) - fees
+        """
+        if self.entry_fill_price is None or self.entry_contracts is None:
+            return  # Can't calculate without entry fill
+
+        entry_fee = self.entry_fee or 0.0
+        exit_fee = self.exit_fee or 0.0
+        self.total_fees = entry_fee + exit_fee
+
+        if self.exit_fill_price is not None:
+            # Early exit: sold before resolution
+            self.gross_pnl = self.entry_contracts * (self.exit_fill_price - self.entry_fill_price)
+        elif self.status == "settled":
+            # Binary resolution: payout is 1.0 (win) or 0.0 (loss)
+            payout = 1.0 if self.outcome == "win" else 0.0
+            self.gross_pnl = self.entry_contracts * (payout - self.entry_fill_price)
+        else:
+            return  # Can't calculate yet
+
+        self.net_pnl = self.gross_pnl - self.total_fees
+        self.outcome = "win" if self.net_pnl > 0 else "loss"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for serialization."""
+        return {
+            "trade_id": self.trade_id,
+            "sim_trade_id": self.sim_trade_id,
+            "window_id": self.window_id,
+            "asset": self.asset,
+            "direction": self.direction,
+            "entry_mode": self.entry_mode,
+            "bet_size": self.bet_size,
+            "entry_order_id": self.entry_order_id,
+            "entry_time": self.entry_time.isoformat() if self.entry_time else None,
+            "entry_price_requested": self.entry_price_requested,
+            "entry_fill_price": self.entry_fill_price,
+            "entry_contracts": self.entry_contracts,
+            "entry_fee": self.entry_fee,
+            "exit_order_id": self.exit_order_id,
+            "exit_time": self.exit_time.isoformat() if self.exit_time else None,
+            "exit_price_requested": self.exit_price_requested,
+            "exit_fill_price": self.exit_fill_price,
+            "exit_contracts": self.exit_contracts,
+            "exit_fee": self.exit_fee,
+            "gross_pnl": self.gross_pnl,
+            "total_fees": self.total_fees,
+            "net_pnl": self.net_pnl,
+            "outcome": self.outcome,
+            "status": self.status,
+            "exchange": self.exchange,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

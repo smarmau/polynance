@@ -1,15 +1,25 @@
-"""Core simulated trading engine."""
+"""Core simulated trading engine.
 
+Supports both dry-run (simulated) and live trading modes. When live_trading=True
+and an ExchangeClient with trading support is provided, trades are placed on the
+exchange in parallel with the simulation tracking.
+"""
+
+import asyncio
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, TYPE_CHECKING
 
 from ..db.database import Database
 from ..db.models import Window
-from .models import SimulatedTrade, TradingState, PerAssetStats
+from .models import SimulatedTrade, TradingState, PerAssetStats, LiveTrade
 from .database import TradingDatabase
+from .live_database import LiveTradingDatabase
 from .bet_sizing import SlowGrowthSizer
+
+if TYPE_CHECKING:
+    from ..clients.exchange import ExchangeClient, OrderResult
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +146,12 @@ class SimulatedTrader:
         combo_stop_time: str = DEFAULT_COMBO_STOP_TIME,
         combo_stop_delta: float = DEFAULT_COMBO_STOP_DELTA,
         combo_xasset_min: int = DEFAULT_COMBO_XASSET_MIN,
+        # Exchange client (for live order placement, optional)
+        exchange: "Optional[ExchangeClient]" = None,
+        # Live trading mode
+        live_trading: bool = False,
+        # Live trading database (separate from sim DB)
+        live_db: Optional[LiveTradingDatabase] = None,
         # Exchange name (for display)
         exchange_name: str = "polymarket",
         # Fee model
@@ -177,6 +193,12 @@ class SimulatedTrader:
         """
         self.trading_db = trading_db
         self.asset_databases = asset_databases or {}
+
+        # Live trading
+        self.exchange = exchange
+        self.live_trading = live_trading
+        self.live_db = live_db
+        self._live_trades: Dict[str, LiveTrade] = {}  # asset -> open LiveTrade
 
         # Configuration
         self.initial_bankroll = initial_bankroll
@@ -374,6 +396,11 @@ class SimulatedTrader:
             if self.open_trades:
                 logger.info(f"Keeping {len(self.open_trades)} trade(s) as open positions")
 
+        # Live trading: snapshot wallet balance at startup and cancel stale orders
+        if self.live_trading and self.exchange and self.exchange.supports_trading:
+            await self._snapshot_wallet_balance(label="session_start")
+            await self._cancel_stale_orders()
+
     def _get_scaled_bet(self) -> float:
         """Get the current base bet, scaled up based on bankroll growth.
 
@@ -423,6 +450,506 @@ class SimulatedTrader:
             entry_spread = self.spread_cost * bet_size
             exit_spread = self.spread_cost * (n_contracts * exit_contract)
             return entry_fee + exit_fee + entry_spread + exit_spread
+
+    async def _place_live_order(
+        self,
+        asset: str,
+        direction: str,
+        entry_price: float,
+        bet_size: float,
+        sim_trade_id: str = "",
+        window_id: str = "",
+        entry_mode: Optional[str] = None,
+        side: str = "buy",
+    ) -> "Optional[OrderResult]":
+        """Place a live order on the exchange and record in the live DB.
+
+        Creates a LiveTrade record, places the order, polls for fill, and
+        updates the record with actual fill data. Returns the OrderResult so
+        callers can use actual fill prices for P&L.
+
+        Args:
+            asset: Asset symbol (BTC, ETH, SOL, XRP).
+            direction: "bull" or "bear".
+            entry_price: Expected entry contract price (used as limit price).
+            bet_size: Dollar amount of the trade.
+            sim_trade_id: Trade ID of the parallel SimulatedTrade.
+            window_id: Window ID for the trade.
+            entry_mode: Strategy that triggered this trade.
+            side: "buy" or "sell" (default: "buy" for opening positions).
+
+        Returns:
+            OrderResult if order was placed (and possibly filled), None otherwise.
+        """
+        if not self.live_trading or not self.exchange:
+            return None
+
+        if not self.exchange.supports_trading:
+            return None
+
+        try:
+            market = self.exchange.get_cached_market(asset)
+            if not market:
+                logger.warning(f"[{asset}] No cached market for live order, skipping")
+                return None
+
+            # Determine outcome token: bull = YES, bear = NO
+            outcome = "yes" if direction == "bull" else "no"
+
+            # Number of contracts = bet_size / entry_price
+            n_contracts = bet_size / entry_price if entry_price > 0.01 else 0
+            if n_contracts <= 0:
+                return None
+
+            result = await self.exchange.place_order(
+                market=market,
+                side=side,
+                outcome=outcome,
+                amount=n_contracts,
+                price=entry_price,
+                order_type="limit",
+            )
+
+            logger.info(
+                f"[{asset}] LIVE ORDER placed: {result.order_id} "
+                f"{side} {n_contracts:.1f} {outcome.upper()} @ {entry_price:.3f} "
+                f"status={result.status}"
+            )
+
+            # Poll for fill — cancel if not filled (we don't want stale entry orders)
+            result = await self._poll_order_fill(
+                result, max_wait=15.0, interval=1.0, cancel_if_unfilled=True
+            )
+
+            # Handle results
+            if result.status in ("cancelled", "timeout", "expired", "unverified"):
+                logger.warning(
+                    f"[{asset}] Entry order not filled, status={result.status}. "
+                    f"No live position opened."
+                )
+                return None
+
+            # Determine actual fill data
+            fill_price = result.price
+            fill_contracts = result.filled if result.filled > 0 else None
+            fill_fee = result.fee
+
+            # For partial fills, adjust bet_size to reflect what actually filled
+            actual_bet_size = bet_size
+            if result.status == "partial" and fill_contracts and fill_price:
+                actual_bet_size = fill_contracts * fill_price
+                logger.info(
+                    f"[{asset}] PARTIAL FILL: {fill_contracts:.1f}/{n_contracts:.1f} "
+                    f"contracts. Adjusted bet: ${actual_bet_size:.2f}"
+                )
+
+            # Create LiveTrade record
+            live_trade = LiveTrade(
+                sim_trade_id=sim_trade_id,
+                window_id=window_id,
+                asset=asset,
+                direction=direction,
+                entry_mode=entry_mode or self.entry_mode,
+                bet_size=actual_bet_size,
+                entry_order_id=result.order_id,
+                entry_time=datetime.now(timezone.utc),
+                entry_price_requested=entry_price,
+                entry_fill_price=fill_price,
+                entry_contracts=fill_contracts,
+                entry_fee=fill_fee,
+                status="open" if result.status in ("filled", "partial") else "entry_placed",
+                exchange=self.exchange_name,
+            )
+
+            # Store in memory and DB
+            self._live_trades[asset] = live_trade
+            if self.live_db:
+                await self.live_db.insert_trade(live_trade)
+
+            logger.info(
+                f"[{asset}] LIVE FILL: {fill_contracts or '?'} contracts "
+                f"@ {fill_price or '?'} (requested {entry_price:.4f}) "
+                f"fee={fill_fee} status={result.status}"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"[{asset}] Live order placement failed: {e}")
+            return None  # Don't raise — simulation continues regardless
+
+    async def _close_live_position(
+        self,
+        asset: str,
+        direction: str,
+        exit_price: float,
+        n_contracts: float,
+    ) -> "Optional[OrderResult]":
+        """Sell/close a live position on the exchange and update the LiveTrade.
+
+        Places a sell order, polls for fill, and updates the LiveTrade record
+        with actual exit fill data and calculated P&L.
+
+        Args:
+            asset: Asset symbol.
+            direction: "bull" or "bear" (the original trade direction).
+            exit_price: Expected exit contract price (used as limit price).
+            n_contracts: Number of contracts to sell.
+
+        Returns:
+            OrderResult if exit was placed (and possibly filled), None otherwise.
+        """
+        if not self.live_trading or not self.exchange:
+            return None
+
+        if not self.exchange.supports_trading:
+            return None
+
+        # Verify we actually have a live position to close
+        live_trade = self._live_trades.get(asset)
+        if live_trade is None:
+            logger.warning(
+                f"[{asset}] No live position found — skipping exit order. "
+                f"Entry may not have filled."
+            )
+            return None
+
+        try:
+            market = self.exchange.get_cached_market(asset)
+            if not market:
+                logger.warning(f"[{asset}] No cached market for live exit, skipping")
+                return None
+
+            # Use actual filled contracts if available (may differ from n_contracts
+            # due to partial fills or price difference)
+            actual_contracts = live_trade.entry_contracts or n_contracts
+
+            # Selling the same outcome we bought
+            outcome = "yes" if direction == "bull" else "no"
+
+            result = await self.exchange.place_order(
+                market=market,
+                side="sell",
+                outcome=outcome,
+                amount=actual_contracts,
+                price=exit_price,
+                order_type="limit",
+            )
+
+            logger.info(
+                f"[{asset}] LIVE EXIT placed: {result.order_id} "
+                f"sell {n_contracts:.1f} {outcome.upper()} @ {exit_price:.3f} "
+                f"status={result.status}"
+            )
+
+            # Poll for fill — cancel if not filled (we need to exit before window ends)
+            result = await self._poll_order_fill(
+                result, max_wait=15.0, interval=1.0, cancel_if_unfilled=True
+            )
+
+            # Update the LiveTrade record
+            live_trade = self._live_trades.get(asset)
+            if live_trade:
+                live_trade.exit_order_id = result.order_id
+                live_trade.exit_time = datetime.now(timezone.utc)
+                live_trade.exit_price_requested = exit_price
+
+                if result.status in ("filled", "partial"):
+                    live_trade.exit_fill_price = result.price
+                    live_trade.exit_contracts = result.filled if result.filled > 0 else None
+                    live_trade.exit_fee = result.fee
+                    live_trade.status = "closed"
+
+                    # Calculate P&L from actual fills
+                    live_trade.calculate_pnl()
+
+                    logger.info(
+                        f"[{asset}] LIVE EXIT FILL: {result.filled:.1f} contracts "
+                        f"@ {result.price} (requested {exit_price:.4f}) "
+                        f"fee={result.fee} | net_pnl=${live_trade.net_pnl:.2f}"
+                    )
+                elif result.status in ("cancelled", "timeout", "unverified"):
+                    # Exit order didn't fill — position stays open for binary resolution
+                    live_trade.status = "open"
+                    logger.warning(
+                        f"[{asset}] EXIT ORDER NOT FILLED (status={result.status}). "
+                        f"Position will settle at binary resolution."
+                    )
+                else:
+                    live_trade.status = "exit_placed"
+
+                # Save to DB
+                if self.live_db:
+                    await self.live_db.update_trade(live_trade)
+
+                # Remove from open live trades only if fully closed
+                if live_trade.status == "closed":
+                    del self._live_trades[asset]
+
+            return result
+
+        except Exception as e:
+            logger.error(f"[{asset}] Live exit order failed: {e}")
+            return None
+
+    async def _poll_order_fill(
+        self,
+        order: "OrderResult",
+        max_wait: float = 15.0,
+        interval: float = 1.0,
+        cancel_if_unfilled: bool = False,
+    ) -> "OrderResult":
+        """Poll exchange for order fill status using fetch_order().
+
+        Uses fetch_order() to get actual fill price, filled amount, and fee
+        from the exchange. This is critical for accurate P&L.
+
+        If the order is not filled within max_wait and cancel_if_unfilled=True,
+        cancels the order and returns the cancelled state.
+
+        Handles partial fills: if some contracts filled but not all, marks as
+        'partial' status with actual filled amount.
+
+        Args:
+            order: The OrderResult from place_order.
+            max_wait: Maximum seconds to wait for fill (default: 15s).
+            interval: Seconds between polls (default: 1s).
+            cancel_if_unfilled: If True, cancel order after max_wait (default: False).
+
+        Returns:
+            Updated OrderResult with actual fill data from exchange.
+        """
+        if order.status == "filled":
+            return order  # Already filled
+
+        if not self.exchange or not self.exchange.supports_trading:
+            return order
+
+        elapsed = 0.0
+        while elapsed < max_wait:
+            await asyncio.sleep(interval)
+            elapsed += interval
+
+            try:
+                # Use fetch_order to get real fill data
+                updated = await self.exchange.fetch_order(order.order_id)
+
+                if updated.status in ("filled", "matched", "closed"):
+                    # Fully filled — copy actual fill data
+                    order.status = "filled"
+                    order.filled = updated.filled if updated.filled > 0 else order.amount
+                    order.remaining = updated.remaining
+                    order.price = updated.price  # actual fill price
+                    order.fee = updated.fee  # actual fee
+                    logger.info(
+                        f"Order {order.order_id} FILLED after {elapsed:.1f}s: "
+                        f"{order.filled:.1f} contracts @ {order.price} "
+                        f"fee={order.fee}"
+                    )
+                    return order
+
+                elif updated.filled > 0 and updated.remaining > 0:
+                    # Partial fill — update with what we have so far
+                    order.filled = updated.filled
+                    order.remaining = updated.remaining
+                    order.price = updated.price
+                    order.fee = updated.fee
+                    logger.debug(
+                        f"Order {order.order_id} partial fill: "
+                        f"{updated.filled:.1f}/{order.amount:.1f} after {elapsed:.1f}s"
+                    )
+                    # Continue polling — might fill fully
+
+                elif updated.status in ("cancelled", "expired"):
+                    order.status = updated.status
+                    order.filled = updated.filled
+                    order.price = updated.price
+                    order.fee = updated.fee
+                    logger.warning(
+                        f"Order {order.order_id} {updated.status} "
+                        f"(filled={updated.filled})"
+                    )
+                    return order
+
+            except Exception as e:
+                logger.debug(f"fetch_order poll failed: {e}")
+                # Fall back to open orders check
+                try:
+                    open_orders = await self.exchange.fetch_open_orders()
+                    still_open = any(
+                        o.order_id == order.order_id for o in open_orders
+                    )
+                    if not still_open:
+                        # Disappeared from open orders — try fetch_order one more time
+                        try:
+                            final = await self.exchange.fetch_order(order.order_id)
+                            order.status = "filled"
+                            order.filled = final.filled if final.filled > 0 else order.amount
+                            order.price = final.price
+                            order.fee = final.fee
+                            logger.info(
+                                f"Order {order.order_id} filled (confirmed via fetch_order) "
+                                f"after {elapsed:.1f}s (filled={order.filled})"
+                            )
+                        except Exception:
+                            # Cannot confirm fill — do NOT assume it filled
+                            order.status = "unverified"
+                            logger.critical(
+                                f"Order {order.order_id} disappeared from open orders but "
+                                f"fetch_order also failed. Status set to 'unverified'. "
+                                f"MANUAL CHECK REQUIRED — do not trust this fill."
+                            )
+                        return order
+                except Exception:
+                    pass
+
+        # Timed out — handle partial fills and optional cancellation
+        if order.status != "filled":
+            if order.filled > 0:
+                # Partial fill: keep what we got
+                order.status = "partial"
+                logger.warning(
+                    f"Order {order.order_id} PARTIAL fill after {max_wait}s: "
+                    f"{order.filled:.1f}/{order.amount:.1f} contracts"
+                )
+            elif cancel_if_unfilled:
+                # No fill — cancel it
+                try:
+                    cancel_result = await self.exchange.cancel_order(order.order_id)
+                    order.status = "cancelled"
+                    order.filled = cancel_result.filled
+                    order.price = cancel_result.price
+                    order.fee = cancel_result.fee
+                    logger.warning(
+                        f"Order {order.order_id} CANCELLED after {max_wait}s timeout "
+                        f"(filled={order.filled})"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to cancel timed-out order {order.order_id}: {e}")
+                    order.status = "timeout"
+            else:
+                order.status = "timeout"
+                logger.warning(
+                    f"Order {order.order_id} not filled after {max_wait}s "
+                    f"(status={order.status}, NOT cancelled)"
+                )
+
+        return order
+
+    async def _fetch_wallet_balance(self) -> Optional[float]:
+        """Fetch actual wallet balance from the exchange.
+
+        This is the source of truth for bankroll when live trading.
+        Returns the available USDC balance, or None if unavailable.
+        """
+        if not self.exchange or not self.exchange.supports_trading:
+            return None
+
+        try:
+            balances = await self.exchange.fetch_balance()
+            for bal in balances:
+                if bal.currency.upper() in ("USDC", "USD"):
+                    logger.debug(
+                        f"Wallet: total=${bal.total:.2f} available=${bal.available:.2f} "
+                        f"locked=${bal.locked:.2f}"
+                    )
+                    return bal.total  # total = available + locked in orders
+            logger.debug("No USDC/USD balance found in wallet")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to fetch wallet balance: {e}")
+            return None
+
+    async def _cancel_stale_orders(self, asset: Optional[str] = None):
+        """Cancel all open orders on the exchange, or for a specific asset.
+
+        Called at window completion and before placing new entry orders to
+        prevent stale limit orders from sitting on the book.
+
+        Args:
+            asset: If provided, only cancel orders for this asset's market.
+                   If None, cancel ALL open orders.
+        """
+        if not self.exchange or not self.exchange.supports_trading:
+            return
+
+        try:
+            market = None
+            if asset:
+                market = self.exchange.get_cached_market(asset)
+
+            open_orders = await self.exchange.fetch_open_orders(market=market)
+
+            if not open_orders:
+                return
+
+            for order in open_orders:
+                try:
+                    await self.exchange.cancel_order(order.order_id)
+                    logger.info(
+                        f"Cancelled stale order: {order.order_id} "
+                        f"({order.side} {order.amount:.1f} @ {order.price})"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to cancel stale order {order.order_id}: {e}")
+
+            if open_orders:
+                logger.info(f"Cleaned up {len(open_orders)} stale order(s)")
+
+        except Exception as e:
+            logger.warning(f"Failed to check for stale orders: {e}")
+
+    async def _snapshot_wallet_balance(self, label: str = ""):
+        """Snapshot the current wallet balance and log it.
+
+        Called at session start and periodically for P&L tracking.
+        The wallet balance is the ultimate source of truth — it captures
+        all fees, slippage, partial fills, and settlement.
+
+        Args:
+            label: Optional label for the log message (e.g. "session_start").
+        """
+        if not self.exchange or not self.exchange.supports_trading:
+            return
+
+        try:
+            balance = await self._fetch_wallet_balance()
+            if balance is not None:
+                prefix = f"[{label}] " if label else ""
+                logger.info(
+                    f"{prefix}Wallet balance snapshot: ${balance:.2f}"
+                )
+
+                # Update live_state in DB
+                if self.live_db:
+                    now = datetime.now(timezone.utc)
+                    await self.live_db.conn.execute(
+                        """
+                        INSERT INTO live_state (id, timestamp, exchange_balance, initial_deposit,
+                                                created_at, updated_at)
+                        VALUES (1, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            exchange_balance = ?,
+                            timestamp = ?,
+                            updated_at = ?
+                        """,
+                        (
+                            now.isoformat(), balance,
+                            balance,  # first time = initial deposit
+                            now.isoformat(), now.isoformat(),
+                            # ON CONFLICT SET values:
+                            balance, now.isoformat(), now.isoformat(),
+                        ),
+                    )
+                    await self.live_db.conn.commit()
+
+                # Use wallet as source of truth for bankroll
+                if self.state:
+                    self.state.current_bankroll = balance
+            else:
+                logger.debug("Wallet balance snapshot: unavailable")
+        except Exception as e:
+            logger.warning(f"Wallet balance snapshot failed: {e}")
 
     async def on_sample_at_signal(self, asset: str, sample, state):
         """Handle sample at t=7.5 - check for initial signal (two-stage) or direct entry (single).
@@ -553,6 +1080,13 @@ class SimulatedTrader:
             logger.info(
                 f"[{asset}] OPENED {direction.upper()} position (two-stage confirmed): "
                 f"entry={entry_price:.3f}, bet=${bet_size:.2f}, window={sample.window_id}"
+            )
+
+            # Place live order if enabled
+            await self._place_live_order(
+                asset, direction, entry_price, bet_size,
+                sim_trade_id=trade.trade_id, window_id=sample.window_id,
+                entry_mode="two_stage",
             )
 
         except Exception as e:
@@ -724,6 +1258,13 @@ class SimulatedTrader:
                 f"entry={entry_price:.3f}, bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
+            # Place live order if enabled
+            await self._place_live_order(
+                asset, direction, entry_price, bet_size,
+                sim_trade_id=trade.trade_id, window_id=sample.window_id,
+                entry_mode="single",
+            )
+
         except Exception as e:
             logger.error(f"[{asset}] Error in trade entry: {e}", exc_info=True)
 
@@ -867,6 +1408,13 @@ class SimulatedTrader:
                 f"bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
+            # Place live order if enabled
+            await self._place_live_order(
+                asset, direction, entry_price, bet_size,
+                sim_trade_id=trade.trade_id, window_id=sample.window_id,
+                entry_mode="contrarian",
+            )
+
         except Exception as e:
             logger.error(f"[{asset}] Error in contrarian entry: {e}", exc_info=True)
 
@@ -875,6 +1423,10 @@ class SimulatedTrader:
 
         Sell the position at current PM price. P&L is the price difference
         minus double fees (entry + exit).
+
+        When live trading is enabled, places the exit order first and uses
+        actual fill data from the exchange for P&L. Falls back to simulated
+        estimates if live fill data is not available.
 
         Args:
             asset: Asset symbol (BTC, ETH, SOL, XRP)
@@ -892,7 +1444,7 @@ class SimulatedTrader:
                 logger.warning(f"[{asset}] No pm_yes at exit time, cannot close position")
                 return
 
-            # Calculate exit contract price
+            # Calculate simulated exit contract price
             if trade.direction == "bull":
                 exit_contract = pm_yes
                 entry_contract = trade.entry_price  # was pm_yes at entry
@@ -900,23 +1452,81 @@ class SimulatedTrader:
                 exit_contract = 1.0 - pm_yes
                 entry_contract = trade.entry_price  # was (1 - pm_yes) at entry
 
-            # Early exit P&L: sell position before resolution
-            # n_contracts = bet_size / entry_contract
-            # gross = n_contracts * (exit_contract - entry_contract)
             if entry_contract <= 0.001:
                 logger.warning(f"[{asset}] Entry contract price too low, skipping exit")
                 return
 
             n_contracts = trade.bet_size / entry_contract
-            gross_pnl = n_contracts * (exit_contract - entry_contract)
 
-            # Calculate fees using configured fee model
-            total_fees = self._calculate_fees(entry_contract, exit_contract, n_contracts, trade.bet_size)
+            # Place live exit order FIRST so we get actual fill data
+            exit_result = await self._close_live_position(
+                asset, trade.direction, exit_contract, n_contracts
+            )
 
-            net_pnl = gross_pnl - total_fees
+            # Check if we have actual live fill data to use for P&L
+            live_trade = self._live_trades.get(asset)
+            if live_trade is None and self.live_db:
+                # May have been closed by _close_live_position already
+                live_trade = await self.live_db.get_trade_by_sim_id(trade.trade_id)
+
+            # If the live exit order didn't fill, the position stays open on the exchange
+            # and will settle at binary resolution. Don't resolve the sim trade here —
+            # leave it in open_trades so on_window_complete → _resolve_trade handles it.
+            if (
+                self.live_trading
+                and live_trade is not None
+                and live_trade.status == "open"
+                and live_trade.exit_fill_price is None
+            ):
+                logger.warning(
+                    f"[{asset}] Live exit order did not fill — deferring to binary resolution. "
+                    f"Position stays open on exchange."
+                )
+                return
+
+            use_live = (
+                self.live_trading
+                and live_trade is not None
+                and live_trade.entry_fill_price is not None
+                and live_trade.exit_fill_price is not None
+            )
+
+            if use_live:
+                # Use actual exchange fill data for P&L
+                actual_entry = live_trade.entry_fill_price
+                actual_exit = live_trade.exit_fill_price
+                actual_contracts = live_trade.entry_contracts or n_contracts
+                actual_entry_fee = live_trade.entry_fee or 0.0
+                actual_exit_fee = live_trade.exit_fee or 0.0
+
+                gross_pnl = actual_contracts * (actual_exit - actual_entry)
+                total_fees = actual_entry_fee + actual_exit_fee
+                net_pnl = gross_pnl - total_fees
+
+                logger.info(
+                    f"[{asset}] Using LIVE fill data: entry={actual_entry:.4f} "
+                    f"exit={actual_exit:.4f} fees=${total_fees:.4f}"
+                )
+            else:
+                # Fall back to simulated estimates
+                gross_pnl = n_contracts * (exit_contract - entry_contract)
+                total_fees = self._calculate_fees(
+                    entry_contract, exit_contract, n_contracts, trade.bet_size
+                )
+                net_pnl = gross_pnl - total_fees
 
             # Update portfolio state
-            self.state.current_bankroll += net_pnl
+            # In live mode, fetch actual wallet balance as source of truth
+            if self.live_trading and self.exchange and self.exchange.supports_trading:
+                wallet_balance = await self._fetch_wallet_balance()
+                if wallet_balance is not None:
+                    self.state.current_bankroll = wallet_balance
+                    logger.info(f"[{asset}] Wallet balance (source of truth): ${wallet_balance:.2f}")
+                else:
+                    self.state.current_bankroll += net_pnl
+            else:
+                self.state.current_bankroll += net_pnl
+
             self.state.total_pnl += net_pnl
             self.state.total_trades += 1
 
@@ -988,12 +1598,14 @@ class SimulatedTrader:
 
             # Remove from open trades
             del self.open_trades[asset]
+            self._live_trades.pop(asset, None)
 
             # Log result
             result_str = "WIN" if won else "LOSS"
             pnl_str = f"+${net_pnl:.2f}" if net_pnl >= 0 else f"-${abs(net_pnl):.2f}"
+            source = "LIVE" if use_live else "SIM"
             logger.info(
-                f"[{asset}] CONTRARIAN EXIT: {result_str} | "
+                f"[{asset}] CONTRARIAN EXIT ({source}): {result_str} | "
                 f"P&L: {pnl_str} (gross: ${gross_pnl:.2f}, fees: ${total_fees:.2f}) | "
                 f"entry={entry_contract:.3f} exit={exit_contract:.3f} | "
                 f"Bankroll: ${self.state.current_bankroll:.2f} | "
@@ -1237,6 +1849,13 @@ class SimulatedTrader:
                 f"bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
+            # Place live order if enabled
+            await self._place_live_order(
+                asset, direction, entry_price, bet_size,
+                sim_trade_id=trade.trade_id, window_id=sample.window_id,
+                entry_mode="contrarian_consensus",
+            )
+
         except Exception as e:
             logger.error(f"[{asset}] Error in consensus trade entry: {e}", exc_info=True)
 
@@ -1361,6 +1980,13 @@ class SimulatedTrader:
                 f"prev2={prev2:.3f} prev1={prev1:.3f} t0={t0_pm:.3f} "
                 f"entry={entry_price:.3f} (pm={pm_yes:.3f}), "
                 f"bet=${bet_size:.2f}, window={sample.window_id}"
+            )
+
+            # Place live order if enabled
+            await self._place_live_order(
+                asset, direction, entry_price, bet_size,
+                sim_trade_id=trade.trade_id, window_id=sample.window_id,
+                entry_mode="accel_dbl",
             )
 
         except Exception as e:
@@ -1547,6 +2173,13 @@ class SimulatedTrader:
                 f"entry={entry_price:.3f} (pm={pm_yes:.3f}), "
                 f"bet=${bet_size:.2f}, stop_delta={self.combo_stop_delta}, "
                 f"window={sample.window_id}"
+            )
+
+            # Place live order if enabled
+            await self._place_live_order(
+                asset, direction, entry_price, bet_size,
+                sim_trade_id=trade.trade_id, window_id=sample.window_id,
+                entry_mode="combo_dbl",
             )
 
         except Exception as e:
@@ -1822,6 +2455,13 @@ class SimulatedTrader:
                 f"bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
+            # Place live order if enabled
+            await self._place_live_order(
+                asset, direction, entry_price, bet_size,
+                sim_trade_id=trade.trade_id, window_id=sample.window_id,
+                entry_mode="triple_filter",
+            )
+
         except Exception as e:
             logger.error(f"[{asset}] Error in triple trade entry: {e}", exc_info=True)
 
@@ -1842,6 +2482,9 @@ class SimulatedTrader:
             window: Completed window with outcome
         """
         try:
+            # Cancel any stale open orders from this window before moving to next
+            await self._cancel_stale_orders(asset)
+
             # For contrarian-family modes, track previous window's pm_yes at t=12.5
             # This is needed for the next window's entry decision
             if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
@@ -1910,19 +2553,9 @@ class SimulatedTrader:
     async def _resolve_trade(self, asset: str, window: Window):
         """Resolve an open trade with window outcome.
 
-        P&L calculation matches backtest_suite.py:
-        - Bull (BUY YES): Win if outcome='up', Lose if outcome='down'
-        - Bear (BUY NO): Win if outcome='down', Lose if outcome='up'
-
-        Payouts:
-        - Bull win: profit = (1 - entry_price) * bet_size
-        - Bull loss: loss = entry_price * bet_size
-        - Bear win: profit = entry_price * bet_size (original YES price)
-        - Bear loss: loss = (1 - entry_price) * bet_size
-
-        Fees (matching actual Polymarket):
-        - 0.1% (10 bps) taker fee on contract premium (all trades)
-        - ~0.5% spread/slippage cost estimate (all trades)
+        For binary resolution (held to expiry), the payout is 1.0 (win) or 0.0 (loss).
+        When live trading, uses actual entry fill price and fees from exchange.
+        In live mode, also fetches the actual wallet balance as source of truth.
 
         Args:
             asset: Asset symbol
@@ -1941,22 +2574,72 @@ class SimulatedTrader:
         else:  # bear
             won = actual_outcome == "down"
 
-        # Calculate P&L
-        n_contracts = trade.bet_size / trade.entry_price if trade.entry_price > 0.001 else 0
+        # Check for live fill data
+        live_trade = self._live_trades.get(asset)
+        if live_trade is None and self.live_db:
+            live_trade = await self.live_db.get_trade_by_sim_id(trade.trade_id)
 
-        if won:
-            gross_profit = (1 - trade.entry_price) * trade.bet_size
+        use_live = (
+            self.live_trading
+            and live_trade is not None
+            and live_trade.entry_fill_price is not None
+        )
+
+        if use_live:
+            # Use actual entry fill price and fee from exchange
+            actual_entry = live_trade.entry_fill_price
+            actual_contracts = live_trade.entry_contracts or (
+                trade.bet_size / actual_entry if actual_entry > 0.001 else 0
+            )
+            entry_fee = live_trade.entry_fee or 0.0
+
+            # Binary settlement: payout is 1.0 (win) or 0.0 (loss)
+            payout = 1.0 if won else 0.0
+            gross_profit = actual_contracts * (payout - actual_entry)
+            # No exit fee on binary resolution (exchange settles automatically)
+            total_fees = entry_fee
+            net_pnl = gross_profit - total_fees
+
+            # Update LiveTrade record
+            live_trade.status = "settled"
+            live_trade.outcome = "win" if won else "loss"
+            live_trade.gross_pnl = gross_profit
+            live_trade.total_fees = total_fees
+            live_trade.net_pnl = net_pnl
+            if self.live_db:
+                await self.live_db.update_trade(live_trade)
+
+            logger.info(
+                f"[{asset}] Using LIVE fill data for resolution: "
+                f"entry={actual_entry:.4f} contracts={actual_contracts:.1f} "
+                f"fee=${entry_fee:.4f}"
+            )
         else:
-            gross_profit = -trade.entry_price * trade.bet_size
+            # Simulated P&L
+            n_contracts = trade.bet_size / trade.entry_price if trade.entry_price > 0.001 else 0
 
-        # Fees: at resolution there's no exit trade, so exit_contract = 1.0 (win) or 0.0 (loss)
-        exit_contract = 1.0 if won else 0.0
-        total_fees = self._calculate_fees(trade.entry_price, exit_contract, n_contracts, trade.bet_size)
+            if won:
+                gross_profit = (1 - trade.entry_price) * trade.bet_size
+            else:
+                gross_profit = -trade.entry_price * trade.bet_size
 
-        net_pnl = gross_profit - total_fees
+            exit_contract = 1.0 if won else 0.0
+            total_fees = self._calculate_fees(
+                trade.entry_price, exit_contract, n_contracts, trade.bet_size
+            )
+            net_pnl = gross_profit - total_fees
 
-        # Update portfolio state
-        self.state.current_bankroll += net_pnl
+        # In live mode, fetch actual wallet balance as source of truth
+        if self.live_trading and self.exchange and self.exchange.supports_trading:
+            wallet_balance = await self._fetch_wallet_balance()
+            if wallet_balance is not None:
+                self.state.current_bankroll = wallet_balance
+                logger.info(f"[{asset}] Wallet balance (source of truth): ${wallet_balance:.2f}")
+            else:
+                self.state.current_bankroll += net_pnl
+        else:
+            self.state.current_bankroll += net_pnl
+
         self.state.total_pnl += net_pnl
         self.state.total_trades += 1
 
@@ -1976,7 +2659,6 @@ class SimulatedTrader:
                 self.state.max_loss_streak,
                 self.state.current_loss_streak,
             )
-            # Trigger pause after loss - skip next N windows
             if self.pause_windows_after_loss > 0:
                 self.state.pause_windows_remaining = self.pause_windows_after_loss
                 logger.info(
@@ -1987,7 +2669,6 @@ class SimulatedTrader:
         if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
             self.state.current_bet_size = self._get_scaled_bet()
         else:
-            # SlowGrowthSizer uses win streak count, not previous bet
             self.state.current_bet_size = self.sizer.calculate_bet_for_streak(
                 self.state.current_win_streak,
                 self.state.current_bankroll,
@@ -2005,7 +2686,6 @@ class SimulatedTrader:
             else 0
         )
 
-        # Track max drawdown
         if drawdown < self.state.max_drawdown:
             self.state.max_drawdown = drawdown
         if drawdown_pct < self.state.max_drawdown_pct:
@@ -2029,12 +2709,14 @@ class SimulatedTrader:
 
         # Remove from open trades
         del self.open_trades[asset]
+        self._live_trades.pop(asset, None)
 
         # Log result
         result_str = "WIN" if won else "LOSS"
         pnl_str = f"+${net_pnl:.2f}" if net_pnl >= 0 else f"-${abs(net_pnl):.2f}"
+        source = "LIVE" if use_live else "SIM"
         logger.info(
-            f"[{asset}] Trade resolved: {result_str} | "
+            f"[{asset}] Trade resolved ({source}): {result_str} | "
             f"P&L: {pnl_str} | "
             f"Bankroll: ${self.state.current_bankroll:.2f} | "
             f"Win Rate: {self.state.win_rate:.1%}"

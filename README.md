@@ -25,10 +25,10 @@ Requires **Python 3.11+**.
 
 ## Exchange Support
 
-| Exchange | Config Value | Fee Model | Status |
-|----------|-------------|-----------|--------|
-| Polymarket | `"exchange": "polymarket"` | Flat (fee_rate + spread) | Dry-run ready |
-| Kalshi | `"exchange": "kalshi"` | Probability-weighted | Dry-run ready |
+| Exchange | Config Value | Fee Model | Market Data | Live Trading |
+|----------|-------------|-----------|-------------|-------------|
+| Polymarket | `"exchange": "polymarket"` | Flat (fee_rate + spread) | Direct API | Via pmxt |
+| Kalshi | `"exchange": "kalshi"` | Probability-weighted | Public REST API | Not yet |
 
 Set `"exchange"` and `"fee_model"` in your config JSON. Kalshi uses the public API (no authentication required for market data).
 
@@ -38,6 +38,57 @@ Run both exchanges simultaneously with separate configs:
 polynance-trade --config config/config_consensus.json          # Polymarket
 polynance-trade --config config/config_consensus_kalshi.json   # Kalshi
 ```
+
+## Live Trading (Polymarket)
+
+Polynance supports live order placement on Polymarket via the [pmxt](https://github.com/pmxt-dev/pmxt) library. **This is disabled by default** — the bot runs in dry-run (simulation) mode unless explicitly enabled.
+
+### Setup
+
+```bash
+# 1. Install with live trading support
+pip install -e ".[live]"
+
+# 2. Set your Polymarket credentials
+export POLYMARKET_PRIVATE_KEY="your-polygon-private-key"
+export POLYMARKET_PROXY_ADDRESS="your-proxy-address"  # optional
+
+# 3. Enable in config
+```
+
+Add to your config JSON:
+
+```json
+{
+  "exchange": "polymarket",
+  "live_trading": true
+}
+```
+
+### How It Works
+
+When `live_trading` is enabled:
+1. The bot still runs the full simulation (tracking P&L, win rate, drawdown, etc.)
+2. **In addition**, it places real limit orders on Polymarket via pmxt at entry and exit
+3. Entry orders buy YES/NO contracts at the signal price
+4. Exit orders sell the position at the early-exit price
+5. If a live order fails, the simulation continues unaffected
+
+### Safety
+
+- `live_trading` defaults to `false` — you must explicitly enable it
+- pmxt is an optional dependency (`pip install -e ".[live]"`)
+- Missing `POLYMARKET_PRIVATE_KEY` gracefully disables live trading with a warning
+- Live order errors are logged but never crash the bot
+- The simulation always runs regardless of live order outcomes
+
+### Authentication
+
+Polymarket uses Polygon network signatures for order placement:
+- **Private Key**: Your Polygon wallet private key (signs order transactions)
+- **Proxy Address**: Optional Polymarket proxy/smart-wallet address for delegated trading
+
+These are read from environment variables or can be passed programmatically.
 
 ## Entry Modes
 
@@ -168,6 +219,9 @@ polynance-trade --init-config
   // --- Bet scaling (optional) ---
   "bet_scale_threshold": 1.0,       // scale up every 100% gain (0 = disabled)
   "bet_scale_increase": 0.20,       // +20% per threshold step
+
+  // --- Live trading (CAUTION: real money) ---
+  "live_trading": false,            // true = place real orders via pmxt (default: false)
 
   // --- Trading mechanics ---
   "min_trajectory": 0.20,           // minimum pm move from t0 to entry (trajectory filter)
@@ -300,9 +354,9 @@ polynance/
 │   ├── main.py                    # Application orchestrator, sample routing
 │   ├── sampler.py                 # 30-sec data collection, window finalization
 │   ├── clients/
-│   │   ├── exchange.py            # ExchangeClient ABC + factory
-│   │   ├── polymarket.py          # Polymarket CLOB API client
-│   │   ├── polymarket_adapter.py  # Polymarket ExchangeClient adapter
+│   │   ├── exchange.py            # ExchangeClient ABC + factory + trading types
+│   │   ├── polymarket.py          # Polymarket CLOB API client (market data)
+│   │   ├── polymarket_adapter.py  # Polymarket adapter (data + live trading via pmxt)
 │   │   ├── kalshi_adapter.py      # Kalshi ExchangeClient adapter (public REST API)
 │   │   └── binance.py             # Binance spot price client
 │   ├── db/
@@ -365,14 +419,17 @@ Core:
 - `matplotlib`, `seaborn` (charting)
 - `python-dotenv`, `pytz` (utilities)
 
+Live trading (optional):
+- `pmxt` (unified prediction market trading API)
+
 Dev (optional):
 - `pytest`, `pytest-asyncio`, `black`, `ruff`
 
-Install dev deps: `pip install -e ".[dev]"`
+Install extras: `pip install -e ".[live]"` or `pip install -e ".[dev]"`
 
 ## Disclaimer
 
-This is a **simulation only**. No real trades are executed on any exchange. Past performance does not guarantee future results. Prediction markets carry significant risk.
+By default this runs in **dry-run (simulation) mode** — no real trades are placed. When `live_trading` is enabled, real orders are submitted to Polymarket. **Use at your own risk.** Past performance does not guarantee future results. Prediction markets carry significant risk.
 
 ## License
 

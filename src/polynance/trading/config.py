@@ -108,6 +108,9 @@ class TradingConfig:
     bet_scale_threshold: float = 0.0  # 0=disabled, 1.0=every 100% gain
     bet_scale_increase: float = 0.0   # 0.20 = +20% per threshold step
 
+    # Live trading (CAUTION: places real orders with real money)
+    live_trading: bool = False  # False = dry-run only (default, safe)
+
     # Signal quality filter
     min_trajectory: float = 0.20  # Min PM price movement from t=0 to entry
 
@@ -184,6 +187,7 @@ class TradingConfig:
             "triple_xasset_min": self.triple_xasset_min,
             "triple_pm0_bull_min": self.triple_pm0_bull_min,
             "triple_pm0_bear_max": self.triple_pm0_bear_max,
+            "live_trading": self.live_trading,
         }
 
     def save(self, path: Optional[Path] = None):

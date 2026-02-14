@@ -134,6 +134,8 @@ async def async_main(args, config: TradingConfig):
     logger.info(f"Base Bet: ${config.base_bet:.2f}")
     if config.bet_scale_threshold > 0:
         logger.info(f"Bet Scale: +{config.bet_scale_increase*100:.0f}% per {config.bet_scale_threshold*100:.0f}% gain")
+    if config.live_trading:
+        logger.info("*** LIVE TRADING ENABLED — REAL ORDERS WILL BE PLACED ***")
     if config.entry_mode == "triple_filter":
         logger.info(f"Prev Window Thresh: >= {config.triple_prev_thresh} (double required)")
         logger.info(f"Cross-Asset: >= {config.triple_xasset_min} assets double-strong")
