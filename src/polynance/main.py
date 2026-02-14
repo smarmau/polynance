@@ -64,7 +64,6 @@ class Application:
         # Trading components (optional)
         self.trader = None
         self.trading_db = None
-        self.live_db = None
 
         # Running flag
         self._running = False
@@ -140,25 +139,23 @@ class Application:
             logger.info("Dashboard disabled - verbose logging mode active")
 
     async def _initialize_trading(self):
-        """Initialize the simulated trading engine."""
+        """Initialize the trading engine."""
         from .trading.database import TradingDatabase
-        from .trading.live_database import LiveTradingDatabase
         from .trading.trader import SimulatedTrader
 
-        logger.info("Initializing simulated trading engine...")
+        logger.info("Initializing trading engine...")
 
-        # Create trading database (simulation)
-        trading_db_path = self.data_dir / "sim_trading.db"
+        # Use trading.db, falling back to legacy sim_trading.db if it exists
+        trading_db_path = self.data_dir / "trading.db"
+        legacy_db_path = self.data_dir / "sim_trading.db"
+        if not trading_db_path.exists() and legacy_db_path.exists():
+            logger.info(f"Migrating legacy database: {legacy_db_path} → {trading_db_path}")
+            legacy_db_path.rename(trading_db_path)
         self.trading_db = TradingDatabase(trading_db_path)
         await self.trading_db.connect()
 
-        # Create live trading database if live trading is enabled
+        # Check if live trading is enabled
         live_trading = self.trading_config.get("live_trading", False)
-        if live_trading:
-            live_db_path = self.data_dir / "live_trading.db"
-            self.live_db = LiveTradingDatabase(live_db_path)
-            await self.live_db.connect()
-            logger.info(f"Live trading database: {live_db_path}")
 
         # Create trader with config
         self.trader = SimulatedTrader(
@@ -166,7 +163,6 @@ class Application:
             asset_databases=self.databases,
             exchange=self.exchange,
             live_trading=live_trading,
-            live_db=self.live_db,
             initial_bankroll=self.trading_config.get("initial_bankroll", 1000.0),
             base_bet=self.trading_config.get("base_bet", 25.0),
             fee_rate=self.trading_config.get("fee_rate", 0.02),
@@ -509,14 +505,6 @@ class Application:
                 logger.warning("Trading database close timed out")
             except Exception as e:
                 logger.warning(f"Error closing trading database: {e}")
-
-        if self.live_db:
-            try:
-                await asyncio.wait_for(self.live_db.close(), timeout=2.0)
-            except asyncio.TimeoutError:
-                logger.warning("Live trading database close timed out")
-            except Exception as e:
-                logger.warning(f"Error closing live trading database: {e}")
 
         logger.info("Shutdown complete")
 

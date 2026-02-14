@@ -88,6 +88,18 @@ CREATE TABLE IF NOT EXISTS sim_trades (
     spot_velocity REAL,
     pm_momentum REAL,
 
+    -- Live exchange data (populated when live_trading=True)
+    live_order_id TEXT,
+    live_entry_fill_price REAL,
+    live_entry_contracts REAL,
+    live_entry_fee REAL,
+    live_exit_order_id TEXT,
+    live_exit_fill_price REAL,
+    live_exit_contracts REAL,
+    live_exit_fee REAL,
+    live_status TEXT,
+    exchange TEXT,
+
     -- Metadata
     created_at TIMESTAMP NOT NULL,
     resolved_at TIMESTAMP
@@ -167,6 +179,33 @@ class TradingDatabase:
             await self._conn.commit()
         except Exception as e:
             logger.debug(f"Migration check (sim_trades metadata): {e}")
+
+        # Migration: Add live exchange data columns to sim_trades
+        try:
+            cursor = await self._conn.execute("PRAGMA table_info(sim_trades)")
+            columns = [row[1] for row in await cursor.fetchall()]
+
+            live_cols = {
+                "live_order_id": "TEXT",
+                "live_entry_fill_price": "REAL",
+                "live_entry_contracts": "REAL",
+                "live_entry_fee": "REAL",
+                "live_exit_order_id": "TEXT",
+                "live_exit_fill_price": "REAL",
+                "live_exit_contracts": "REAL",
+                "live_exit_fee": "REAL",
+                "live_status": "TEXT",
+                "exchange": "TEXT",
+            }
+            for col_name, col_type in live_cols.items():
+                if col_name not in columns:
+                    await self._conn.execute(
+                        f"ALTER TABLE sim_trades ADD COLUMN {col_name} {col_type}"
+                    )
+                    logger.info(f"Migration: Added {col_name} column to sim_trades")
+            await self._conn.commit()
+        except Exception as e:
+            logger.debug(f"Migration check (sim_trades live columns): {e}")
 
     async def close(self):
         """Close the database connection."""
@@ -271,8 +310,11 @@ class TradingDatabase:
             gross_pnl, fee_paid, spread_cost, net_pnl,
             bankroll_after, drawdown, drawdown_pct,
             entry_mode, prev_pm, prev2_pm, spot_velocity, pm_momentum,
+            live_order_id, live_entry_fill_price, live_entry_contracts,
+            live_entry_fee, live_exit_order_id, live_exit_fill_price,
+            live_exit_contracts, live_exit_fee, live_status, exchange,
             created_at, resolved_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         cursor = await self.conn.execute(
@@ -300,6 +342,16 @@ class TradingDatabase:
                 trade.prev2_pm,
                 trade.spot_velocity,
                 trade.pm_momentum,
+                trade.live_order_id,
+                trade.live_entry_fill_price,
+                trade.live_entry_contracts,
+                trade.live_entry_fee,
+                trade.live_exit_order_id,
+                trade.live_exit_fill_price,
+                trade.live_exit_contracts,
+                trade.live_exit_fee,
+                trade.live_status,
+                trade.exchange,
                 trade.created_at.isoformat() if trade.created_at else None,
                 trade.resolved_at.isoformat() if trade.resolved_at else None,
             ),
@@ -321,6 +373,17 @@ class TradingDatabase:
             bankroll_after = ?,
             drawdown = ?,
             drawdown_pct = ?,
+            live_order_id = ?,
+            live_entry_fill_price = ?,
+            live_entry_contracts = ?,
+            live_entry_fee = ?,
+            live_exit_order_id = ?,
+            live_exit_fill_price = ?,
+            live_exit_contracts = ?,
+            live_exit_fee = ?,
+            live_status = ?,
+            exchange = ?,
+            bet_size = ?,
             resolved_at = ?
         WHERE trade_id = ?
         """
@@ -338,6 +401,17 @@ class TradingDatabase:
                 trade.bankroll_after,
                 trade.drawdown,
                 trade.drawdown_pct,
+                trade.live_order_id,
+                trade.live_entry_fill_price,
+                trade.live_entry_contracts,
+                trade.live_entry_fee,
+                trade.live_exit_order_id,
+                trade.live_exit_fill_price,
+                trade.live_exit_contracts,
+                trade.live_exit_fee,
+                trade.live_status,
+                trade.exchange,
+                trade.bet_size,
                 trade.resolved_at.isoformat() if trade.resolved_at else None,
                 trade.trade_id,
             ),
@@ -447,6 +521,16 @@ class TradingDatabase:
             prev2_pm=row["prev2_pm"] if "prev2_pm" in keys else None,
             spot_velocity=row["spot_velocity"] if "spot_velocity" in keys else None,
             pm_momentum=row["pm_momentum"] if "pm_momentum" in keys else None,
+            live_order_id=row["live_order_id"] if "live_order_id" in keys else None,
+            live_entry_fill_price=row["live_entry_fill_price"] if "live_entry_fill_price" in keys else None,
+            live_entry_contracts=row["live_entry_contracts"] if "live_entry_contracts" in keys else None,
+            live_entry_fee=row["live_entry_fee"] if "live_entry_fee" in keys else None,
+            live_exit_order_id=row["live_exit_order_id"] if "live_exit_order_id" in keys else None,
+            live_exit_fill_price=row["live_exit_fill_price"] if "live_exit_fill_price" in keys else None,
+            live_exit_contracts=row["live_exit_contracts"] if "live_exit_contracts" in keys else None,
+            live_exit_fee=row["live_exit_fee"] if "live_exit_fee" in keys else None,
+            live_status=row["live_status"] if "live_status" in keys else None,
+            exchange=row["exchange"] if "exchange" in keys else None,
             created_at=(
                 datetime.fromisoformat(row["created_at"])
                 if row["created_at"]

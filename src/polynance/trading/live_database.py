@@ -1,9 +1,9 @@
-"""Database operations for live trading.
+"""DEPRECATED: Live trade data is now stored directly in sim_trades via the
+live_* fields on SimulatedTrade (see models.py).
 
-Separate from the simulated trading database — stores actual exchange orders,
-fill prices, and fees. This is the source of truth for P&L when live_trading=True.
-
-The sim_trades database continues to run in parallel with estimated values.
+This module is retained only for backward compatibility with existing
+live_trading.db files that may need to be read for historical data migration.
+It is no longer imported or used by the active trading pipeline.
 """
 
 import logging

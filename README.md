@@ -27,7 +27,7 @@ Requires **Python 3.11+**.
 
 | Exchange | Config Value | Fee Model | Market Data | Live Trading |
 |----------|-------------|-----------|-------------|-------------|
-| Polymarket | `"exchange": "polymarket"` | Flat (fee_rate + spread) | Direct API | Via pmxt |
+| Polymarket | `"exchange": "polymarket"` | Flat (fee_rate + spread) | Direct API | Via py-clob-client |
 | Kalshi | `"exchange": "kalshi"` | Probability-weighted | Public REST API | Not yet |
 
 Set `"exchange"` and `"fee_model"` in your config JSON. Kalshi uses the public API (no authentication required for market data).
@@ -41,7 +41,7 @@ polynance-trade --config config/config_consensus_kalshi.json   # Kalshi
 
 ## Live Trading (Polymarket)
 
-Polynance supports live order placement on Polymarket via the [pmxt](https://github.com/pmxt-dev/pmxt) library. **This is disabled by default** — the bot runs in dry-run (simulation) mode unless explicitly enabled.
+Polynance supports live order placement on Polymarket via [py-clob-client](https://github.com/Polymarket/py-clob-client), Polymarket's official Python CLOB API client. **This is disabled by default** — the bot runs in dry-run (simulation) mode unless explicitly enabled.
 
 ### Setup
 
@@ -51,7 +51,14 @@ pip install -e ".[live]"
 
 # 2. Set your Polymarket credentials
 export POLYMARKET_PRIVATE_KEY="your-polygon-private-key"
-export POLYMARKET_PROXY_ADDRESS="your-proxy-address"  # optional
+
+# Optional: pre-set API creds (otherwise derived automatically from private key)
+export CLOB_API_KEY="your-api-key"
+export CLOB_SECRET="your-api-secret"
+export CLOB_PASS_PHRASE="your-api-passphrase"
+
+# Optional: funder address if using a separate funding wallet
+export POLYMARKET_FUNDER_ADDRESS="your-funder-address"
 
 # 3. Enable in config
 ```
@@ -69,7 +76,7 @@ Add to your config JSON:
 
 When `live_trading` is enabled:
 1. The bot still runs the full simulation (tracking P&L, win rate, drawdown, etc.)
-2. **In addition**, it places real limit orders on Polymarket via pmxt at entry and exit
+2. **In addition**, it places real limit orders on Polymarket via py-clob-client at entry and exit
 3. Entry orders buy YES/NO contracts at the signal price
 4. Exit orders sell the position at the early-exit price
 5. If a live order fails, the simulation continues unaffected
@@ -77,16 +84,17 @@ When `live_trading` is enabled:
 ### Safety
 
 - `live_trading` defaults to `false` — you must explicitly enable it
-- pmxt is an optional dependency (`pip install -e ".[live]"`)
+- py-clob-client is an optional dependency (`pip install -e ".[live]"`)
 - Missing `POLYMARKET_PRIVATE_KEY` gracefully disables live trading with a warning
 - Live order errors are logged but never crash the bot
 - The simulation always runs regardless of live order outcomes
 
 ### Authentication
 
-Polymarket uses Polygon network signatures for order placement:
+Polymarket uses EIP-712 signatures on the Polygon network for order placement:
 - **Private Key**: Your Polygon wallet private key (signs order transactions)
-- **Proxy Address**: Optional Polymarket proxy/smart-wallet address for delegated trading
+- **API Credentials**: CLOB API key/secret/passphrase (auto-derived from private key if not provided)
+- **Funder Address**: Optional separate funding wallet address
 
 These are read from environment variables or can be passed programmatically.
 
@@ -221,7 +229,7 @@ polynance-trade --init-config
   "bet_scale_increase": 0.20,       // +20% per threshold step
 
   // --- Live trading (CAUTION: real money) ---
-  "live_trading": false,            // true = place real orders via pmxt (default: false)
+  "live_trading": false,            // true = place real orders via py-clob-client (default: false)
 
   // --- Trading mechanics ---
   "min_trajectory": 0.20,           // minimum pm move from t0 to entry (trajectory filter)
@@ -249,7 +257,7 @@ polynance-trade
 # Use a different config file
 polynance-trade --config path/to/config.json
 
-# Reset trading state (wipes sim_trading.db and starts fresh)
+# Reset trading state (wipes trading.db and starts fresh)
 polynance-trade --reset
 
 # Show current config and exit
@@ -337,7 +345,7 @@ The Rich terminal dashboard shows:
 - `window_time`: time-only key for cross-asset queries (e.g., `"20260209_1530"`)
 - `volatility_regime`: classified as `low` (<15 bps range), `normal` (15-40), `high` (40-80), `extreme` (>80)
 
-### Trading Database (`data/sim_trading.db`)
+### Trading Database (`data/trading.db`)
 
 **`sim_state`** table: Single-row portfolio state (bankroll, P&L, streaks, drawdown)
 
@@ -356,7 +364,7 @@ polynance/
 │   ├── clients/
 │   │   ├── exchange.py            # ExchangeClient ABC + factory + trading types
 │   │   ├── polymarket.py          # Polymarket CLOB API client (market data)
-│   │   ├── polymarket_adapter.py  # Polymarket adapter (data + live trading via pmxt)
+│   │   ├── polymarket_adapter.py  # Polymarket adapter (data + live trading via py-clob-client)
 │   │   ├── kalshi_adapter.py      # Kalshi ExchangeClient adapter (public REST API)
 │   │   └── binance.py             # Binance spot price client
 │   ├── db/
@@ -420,7 +428,7 @@ Core:
 - `python-dotenv`, `pytz` (utilities)
 
 Live trading (optional):
-- `pmxt` (unified prediction market trading API)
+- `py-clob-client` (Polymarket's official CLOB API client)
 
 Dev (optional):
 - `pytest`, `pytest-asyncio`, `black`, `ruff`

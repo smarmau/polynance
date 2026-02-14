@@ -44,11 +44,28 @@ class SimulatedTrade:
     spot_velocity: Optional[float] = None  # spot_price_change_from_open at entry
     pm_momentum: Optional[float] = None  # |pm_t_entry - pm_t0| at entry
 
+    # Live exchange data (populated only when live_trading=True)
+    live_order_id: Optional[str] = None          # Entry order ID from exchange
+    live_entry_fill_price: Optional[float] = None  # Actual fill price from exchange
+    live_entry_contracts: Optional[float] = None   # Actual contracts filled
+    live_entry_fee: Optional[float] = None         # Fee charged on entry
+    live_exit_order_id: Optional[str] = None       # Exit order ID from exchange
+    live_exit_fill_price: Optional[float] = None   # Actual exit fill price
+    live_exit_contracts: Optional[float] = None    # Actual contracts sold
+    live_exit_fee: Optional[float] = None          # Fee charged on exit
+    live_status: Optional[str] = None              # open, closed, settled, failed
+    exchange: Optional[str] = None                 # e.g. "polymarket"
+
     # Metadata
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
     resolved_at: Optional[datetime] = None
+
+    @property
+    def has_live_data(self) -> bool:
+        """Whether this trade has actual exchange fill data."""
+        return self.live_entry_fill_price is not None
 
     @property
     def is_pending(self) -> bool:
@@ -90,6 +107,16 @@ class SimulatedTrade:
             "prev2_pm": self.prev2_pm,
             "spot_velocity": self.spot_velocity,
             "pm_momentum": self.pm_momentum,
+            "live_order_id": self.live_order_id,
+            "live_entry_fill_price": self.live_entry_fill_price,
+            "live_entry_contracts": self.live_entry_contracts,
+            "live_entry_fee": self.live_entry_fee,
+            "live_exit_order_id": self.live_exit_order_id,
+            "live_exit_fill_price": self.live_exit_fill_price,
+            "live_exit_contracts": self.live_exit_contracts,
+            "live_exit_fee": self.live_exit_fee,
+            "live_status": self.live_status,
+            "exchange": self.exchange,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
         }
@@ -217,18 +244,11 @@ class PerAssetStats:
 
 @dataclass
 class LiveTrade:
-    """Record of an actual live trade placed on an exchange.
+    """DEPRECATED: Live trade data is now stored directly on SimulatedTrade
+    via the live_* fields. This class is retained for backward compatibility
+    with existing live_trading.db files only.
 
-    Tracks real order IDs, actual fill prices, and actual fees from the exchange.
-    This is the source of truth for P&L when live_trading=True — the sim_trades
-    table continues to run in parallel with estimated values.
-
-    Lifecycle:
-        1. Entry order placed → status='entry_placed'
-        2. Entry order filled → status='open', entry_fill_price/entry_fee populated
-        3. Exit order placed  → status='exit_placed'
-        4. Exit order filled  → status='closed', exit_fill_price/exit_fee populated, P&L calculated
-        5. Resolution (binary) → status='settled', P&L from binary payout
+    Use SimulatedTrade.live_order_id, .live_entry_fill_price, etc. instead.
     """
 
     # Trade identification

@@ -282,7 +282,7 @@ Recovery Factor: {rf_str}
 
 def main():
     parser = argparse.ArgumentParser(description='Generate trading performance charts')
-    parser.add_argument('--db', type=str, default='data/sim_trading.db',
+    parser.add_argument('--db', type=str, default='data/trading.db',
                         help='Path to trading database')
     parser.add_argument('--output', '-o', type=str, default=None,
                         help='Output path for PNG (default: display only)')
