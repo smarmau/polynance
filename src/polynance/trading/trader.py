@@ -156,6 +156,11 @@ class SimulatedTrader:
         # Bet scaling: increase base_bet every bet_scale_threshold% gain
         bet_scale_threshold: float = 0.0,  # 0 = disabled, e.g. 1.0 = every 100% gain
         bet_scale_increase: float = 0.0,   # e.g. 0.20 = +20% per threshold step
+        # Regime filter: skip trades when volatility is in these regimes
+        # e.g. ["high", "extreme"] to only trade in low/normal vol
+        skip_regimes: Optional[list] = None,
+        # Day-of-week filter: skip trades on these days (0=Mon, 5=Sat, 6=Sun)
+        skip_days: Optional[list] = None,
         # Triple filter
         triple_prev_thresh: float = DEFAULT_TRIPLE_PREV_THRESH,
         triple_bull_thresh: float = DEFAULT_TRIPLE_BULL_THRESH,
@@ -259,6 +264,10 @@ class SimulatedTrader:
         self.triple_pm0_bull_min = triple_pm0_bull_min
         self.triple_pm0_bear_max = triple_pm0_bear_max
 
+        # Regime filter
+        self.skip_regimes = set(skip_regimes) if skip_regimes else set()
+        self.skip_days = set(skip_days) if skip_days else set()
+
         # Map time labels to t_minutes values for contrarian
         self._time_to_minutes = {
             "t0": 0.0, "t2.5": 2.5, "t5": 5.0,
@@ -296,6 +305,9 @@ class SimulatedTrader:
         # Double contrarian: track the window BEFORE prev (prev2)
         # Updated by shifting _prev_window_pm → _prev2_window_pm on window complete
         self._prev2_window_pm: Dict[str, float] = {}
+
+        # Track previous window's volatility regime per asset (for regime filter)
+        self._prev_window_regime: Dict[str, str] = {}
 
         # Consensus: buffer samples at consensus entry time to evaluate cross-asset
         # Maps time_key (e.g. "20260206_0445") -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
@@ -1240,6 +1252,27 @@ class SimulatedTrader:
                 self._last_signals[asset] = None
                 return
 
+            # Regime filter: skip if previous window was high/extreme vol
+            if self.skip_regimes and self._prev_window_regime.get(asset) in self.skip_regimes:
+                logger.debug(
+                    f"[{asset}] Skipping — prev regime "
+                    f"'{self._prev_window_regime[asset]}' in skip_regimes"
+                )
+                self._last_signals[asset] = "skip-regime"
+                return
+
+            # Day-of-week filter
+            if self.skip_days:
+                try:
+                    from datetime import datetime as _dt
+                    dt = _dt.fromisoformat(str(sample.sample_time_utc).replace('Z', '+00:00'))
+                    if dt.weekday() in self.skip_days:
+                        logger.debug(f"[{asset}] Skipping — {dt.strftime('%A')} in skip_days")
+                        self._last_signals[asset] = "skip-day"
+                        return
+                except Exception:
+                    pass
+
             pm_yes = sample.pm_yes_price
             if pm_yes is None:
                 logger.debug(f"[{asset}] No pm_yes_price at contrarian entry time")
@@ -1625,6 +1658,41 @@ class SimulatedTrader:
         buffer = self._consensus_buffer.get(time_key, {})
         if not buffer:
             return
+
+        # --- Pre-filters: regime and day-of-week ---
+
+        # Day-of-week filter (using time_key format "YYYYMMDD_HHMM")
+        if self.skip_days:
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(time_key[:8], "%Y%m%d")
+                if dt.weekday() in self.skip_days:
+                    logger.info(
+                        f"[CONSENSUS] Skipping — day {dt.strftime('%A')} is in skip_days"
+                    )
+                    for asset in buffer:
+                        self._last_signals[asset] = "skip-day"
+                    return
+            except (ValueError, IndexError):
+                pass  # Can't parse date, proceed anyway
+
+        # Regime filter: skip if majority of assets had high/extreme previous window
+        if self.skip_regimes:
+            skip_count = sum(
+                1 for asset in buffer
+                if self._prev_window_regime.get(asset) in self.skip_regimes
+            )
+            if skip_count >= len(buffer) / 2:
+                regime_summary = {
+                    a: self._prev_window_regime.get(a, "?") for a in buffer
+                }
+                logger.info(
+                    f"[CONSENSUS] Skipping — {skip_count}/{len(buffer)} assets had "
+                    f"skip regime in prev window: {regime_summary}"
+                )
+                for asset in buffer:
+                    self._last_signals[asset] = "skip-regime"
+                return
 
         min_agree = self.consensus_min_agree
         thresh = self.contrarian_prev_thresh
@@ -2436,6 +2504,11 @@ class SimulatedTrader:
                         f"[{asset}] Stored prev window pm@t12.5={pm_t12_5:.3f}"
                         f" (prev2={self._prev2_window_pm.get(asset, 'N/A')})"
                     )
+
+                # Store previous window's volatility regime
+                regime = getattr(window, 'volatility_regime', None)
+                if regime:
+                    self._prev_window_regime[asset] = regime
 
             # Resolve any open position for this asset (non-contrarian modes)
             # Contrarian-family trades are already closed at exit time

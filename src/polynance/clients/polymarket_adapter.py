@@ -37,6 +37,9 @@ class PolymarketAdapter(ExchangeClient):
         live_trading: Enable live order placement via py-clob-client.
         private_key: Polygon private key for signing (or POLYMARKET_PRIVATE_KEY env var).
         funder: Optional funder address (or POLYMARKET_FUNDER_ADDRESS env var).
+        signature_type: Wallet type for signing. 0=EOA/MetaMask (default),
+            1=Polymarket proxy/email wallet, 2=browser wallet proxy/Gnosis Safe.
+            Can also be set via POLYMARKET_SIGNATURE_TYPE env var.
     """
 
     def __init__(
@@ -44,12 +47,14 @@ class PolymarketAdapter(ExchangeClient):
         live_trading: bool = False,
         private_key: Optional[str] = None,
         funder: Optional[str] = None,
+        signature_type: Optional[int] = None,
     ):
         self._client = PolymarketClient()
         self._live_trading = live_trading
         self._clob: Optional[object] = None  # ClobClient instance (lazy-initialized)
         self._private_key = private_key
         self._funder = funder
+        self._signature_type = signature_type
 
     async def connect(self):
         """Open the aiohttp session and optionally init ClobClient for trading."""
@@ -82,6 +87,12 @@ class PolymarketAdapter(ExchangeClient):
         pk = self._private_key or os.getenv("POLYMARKET_PRIVATE_KEY", "")
         funder = self._funder or os.getenv("POLYMARKET_FUNDER_ADDRESS")
 
+        # Resolve signature_type: constructor arg > env var > default 0 (EOA)
+        sig_type = self._signature_type
+        if sig_type is None:
+            sig_type_env = os.getenv("POLYMARKET_SIGNATURE_TYPE", "")
+            sig_type = int(sig_type_env) if sig_type_env else 0
+
         if not pk:
             logger.warning(
                 "POLYMARKET_PRIVATE_KEY not set — live trading disabled. "
@@ -96,9 +107,15 @@ class PolymarketAdapter(ExchangeClient):
                 host=CLOB_HOST,
                 key=pk,
                 chain_id=CHAIN_ID_POLYGON,
+                signature_type=sig_type,
             )
             if funder:
                 clob_kwargs["funder"] = funder
+
+            logger.info(
+                f"ClobClient config: signature_type={sig_type} "
+                f"funder={'set' if funder else 'not set'}"
+            )
 
             # Check for pre-set API credentials
             api_key = os.getenv("CLOB_API_KEY", "")

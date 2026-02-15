@@ -18,6 +18,8 @@
   "bet_scale_threshold": 1.0,
   "bet_scale_increase": 0.20,
   "pause_windows_after_loss": 1,
+  "skip_regimes": ["high", "extreme"],
+  "skip_days": [],
   "assets": ["BTC", "ETH", "SOL", "XRP"],
   "data_dir": "data",
   "show_dashboard": true,

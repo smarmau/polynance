@@ -88,7 +88,11 @@ class Application:
         # Initialize API clients
         exchange_name = self.trading_config.get("exchange", "polymarket")
         live_trading = self.trading_config.get("live_trading", False)
-        self.exchange = create_exchange(exchange_name, live_trading=live_trading)
+        exchange_kwargs = {}
+        sig_type = self.trading_config.get("signature_type")
+        if sig_type is not None:
+            exchange_kwargs["signature_type"] = sig_type
+        self.exchange = create_exchange(exchange_name, live_trading=live_trading, **exchange_kwargs)
         await self.exchange.connect()
 
         self.binance = BinanceClient()
@@ -213,6 +217,8 @@ class Application:
             triple_xasset_min=self.trading_config.get("triple_xasset_min", 3),
             triple_pm0_bull_min=self.trading_config.get("triple_pm0_bull_min", 0.50),
             triple_pm0_bear_max=self.trading_config.get("triple_pm0_bear_max", 0.50),
+            skip_regimes=self.trading_config.get("skip_regimes"),
+            skip_days=self.trading_config.get("skip_days"),
         )
         await self.trader.initialize()
 

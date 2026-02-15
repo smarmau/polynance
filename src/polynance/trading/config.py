@@ -111,11 +111,26 @@ class TradingConfig:
     # Live trading (CAUTION: places real orders with real money)
     live_trading: bool = False  # False = dry-run only (default, safe)
 
+    # Wallet signature type for py-clob-client:
+    #   0 = EOA / external wallet (MetaMask, hardware wallet) — default
+    #   1 = Polymarket proxy / email wallet (the web app wallet)
+    #   2 = Browser wallet proxy / Gnosis Safe
+    signature_type: int = 1
+
     # Signal quality filter
     min_trajectory: float = 0.20  # Min PM price movement from t=0 to entry
 
     # Risk management
     pause_windows_after_loss: int = 2  # Skip N windows after any loss
+
+    # Regime filter: skip entry when previous window's volatility was in these regimes
+    # Valid values: "low", "normal", "high", "extreme"
+    # e.g. ["high", "extreme"] to only trade after low/normal vol windows
+    skip_regimes: list = field(default_factory=lambda: ["high", "extreme"])
+
+    # Day-of-week filter: skip entry on these days (0=Mon..6=Sun)
+    # e.g. [5] to skip Saturdays (data shows Saturday is consistently unprofitable)
+    skip_days: list = field(default_factory=lambda: [5])
 
     # Assets to trade
     assets: list = field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
@@ -188,6 +203,9 @@ class TradingConfig:
             "triple_pm0_bull_min": self.triple_pm0_bull_min,
             "triple_pm0_bear_max": self.triple_pm0_bear_max,
             "live_trading": self.live_trading,
+            "signature_type": self.signature_type,
+            "skip_regimes": self.skip_regimes,
+            "skip_days": self.skip_days,
         }
 
     def save(self, path: Optional[Path] = None):
