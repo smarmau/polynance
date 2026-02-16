@@ -367,15 +367,24 @@ class TradingDashboard:
         else:
             bet_text = Text.assemble(("Current Bet: ", "dim"), (f"${state.current_bet_size:.2f}", "cyan"))
 
-        grid.add_row(
-            bet_text,
-            Text.assemble(
+        # Hide scaled bet when recovery sizing is active (recovery handles its own scaling)
+        if self.trader.recovery_sizing != "none":
+            base_bet_text = Text.assemble(
+                ("Base Bet: ", "dim"),
+                (f"${state.base_bet_size:.2f}", "dim"),
+            )
+        else:
+            base_bet_text = Text.assemble(
                 ("Base Bet: ", "dim"),
                 (f"${state.base_bet_size:.2f}", "dim"),
                 (f" (scaled ${self.trader._get_scaled_bet():.2f})", "cyan")
                 if self.trader.bet_scale_threshold > 0
                 else ("", "dim"),
-            ),
+            )
+
+        grid.add_row(
+            bet_text,
+            base_bet_text,
             Text.assemble(("Peak: ", "dim"), (f"${state.peak_bankroll:,.2f}", "white")),
             Text.assemble(("Max DD: ", "dim"), (f"{dd_pct:.1f}%", dd_color)),
         )
