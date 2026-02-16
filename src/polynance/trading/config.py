@@ -123,6 +123,12 @@ class TradingConfig:
     # Risk management
     pause_windows_after_loss: int = 2  # Skip N windows after any loss
 
+    # Recovery sizing: step up bet size after consecutive per-asset losses
+    # "none" = flat base_bet, "linear" = base + step*losses, "mart_1.5x" = base * 1.5^losses
+    recovery_sizing: str = "none"
+    recovery_step: float = 25.0           # linear: add this per loss (e.g. $25)
+    recovery_max_multiplier: int = 5      # cap at base_bet * this (e.g. 5 → $125 max)
+
     # Regime filter: skip entry when previous window's volatility was in these regimes
     # Valid values: "low", "normal", "high", "extreme"
     # e.g. ["high", "extreme"] to only trade after low/normal vol windows
@@ -206,6 +212,9 @@ class TradingConfig:
             "signature_type": self.signature_type,
             "skip_regimes": self.skip_regimes,
             "skip_days": self.skip_days,
+            "recovery_sizing": self.recovery_sizing,
+            "recovery_step": self.recovery_step,
+            "recovery_max_multiplier": self.recovery_max_multiplier,
         }
 
     def save(self, path: Optional[Path] = None):

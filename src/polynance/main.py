@@ -219,6 +219,9 @@ class Application:
             triple_pm0_bear_max=self.trading_config.get("triple_pm0_bear_max", 0.50),
             skip_regimes=self.trading_config.get("skip_regimes"),
             skip_days=self.trading_config.get("skip_days"),
+            recovery_sizing=self.trading_config.get("recovery_sizing", "none"),
+            recovery_step=self.trading_config.get("recovery_step", 25.0),
+            recovery_max_multiplier=self.trading_config.get("recovery_max_multiplier", 5),
         )
         await self.trader.initialize()
 

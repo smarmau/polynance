@@ -161,6 +161,10 @@ class SimulatedTrader:
         skip_regimes: Optional[list] = None,
         # Day-of-week filter: skip trades on these days (0=Mon, 5=Sat, 6=Sun)
         skip_days: Optional[list] = None,
+        # Recovery sizing: step up bet after per-asset losses
+        recovery_sizing: str = "none",      # "none", "linear", "mart_1.5x"
+        recovery_step: float = 25.0,        # linear: add this $ per loss
+        recovery_max_multiplier: int = 5,   # cap at base_bet * this
         # Triple filter
         triple_prev_thresh: float = DEFAULT_TRIPLE_PREV_THRESH,
         triple_bull_thresh: float = DEFAULT_TRIPLE_BULL_THRESH,
@@ -268,6 +272,11 @@ class SimulatedTrader:
         self.skip_regimes = set(skip_regimes) if skip_regimes else set()
         self.skip_days = set(skip_days) if skip_days else set()
 
+        # Recovery sizing (per-asset step-up after losses)
+        self.recovery_sizing = recovery_sizing
+        self.recovery_step = recovery_step
+        self.recovery_max_multiplier = recovery_max_multiplier
+
         # Map time labels to t_minutes values for contrarian
         self._time_to_minutes = {
             "t0": 0.0, "t2.5": 2.5, "t5": 5.0,
@@ -308,6 +317,9 @@ class SimulatedTrader:
 
         # Track previous window's volatility regime per asset (for regime filter)
         self._prev_window_regime: Dict[str, str] = {}
+
+        # Recovery sizing: per-asset consecutive loss count
+        self._asset_consecutive_losses: Dict[str, int] = {}
 
         # Consensus: buffer samples at consensus entry time to evaluate cross-asset
         # Maps time_key (e.g. "20260206_0445") -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
@@ -430,6 +442,34 @@ class SimulatedTrader:
         steps = int(gain_pct / self.bet_scale_threshold)
         scaled = self.base_bet * (1 + self.bet_scale_increase) ** steps
         return round(scaled, 2)
+
+    def _get_recovery_bet(self, asset: str) -> float:
+        """Get bet size adjusted for per-asset recovery sizing.
+
+        When recovery_sizing is enabled, steps up the bet after consecutive
+        losses for the specific asset. Resets to base on a win.
+
+        Linear: base + step * losses  (e.g. $25, $50, $75, $100, $125)
+        Mart 1.5x: base * 1.5^losses  (e.g. $25, $37.5, $56.25, ...)
+
+        Falls back to _get_scaled_bet() when recovery_sizing == "none".
+        """
+        if self.recovery_sizing == "none":
+            return self._get_scaled_bet()
+
+        losses = self._asset_consecutive_losses.get(asset, 0)
+        base = self._get_scaled_bet()  # use bankroll-scaled base
+        max_bet = base * self.recovery_max_multiplier
+
+        if self.recovery_sizing == "linear":
+            bet = base + self.recovery_step * losses
+        elif self.recovery_sizing == "mart_1.5x":
+            bet = base * (1.5 ** losses)
+        else:
+            bet = base
+
+        bet = min(bet, max_bet)
+        return round(bet, 2)
 
     def _calculate_fees(
         self, entry_contract: float, exit_contract: float, n_contracts: float, bet_size: float
@@ -1340,8 +1380,8 @@ class SimulatedTrader:
             else:
                 entry_price = 1.0 - pm_yes  # buying NO
 
-            # Fixed bet size
-            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
+            # Bet size (recovery-aware for contrarian modes)
+            bet_size = min(self._get_recovery_bet(asset), self.state.current_bankroll * self.max_bet_pct)
 
             # Compute signal metadata
             _spot_vel = sample.spot_price_change_from_open
@@ -1504,6 +1544,12 @@ class SimulatedTrader:
                     self.state.max_win_streak,
                     self.state.current_win_streak,
                 )
+                # Recovery sizing: reset per-asset loss streak on win
+                if self.recovery_sizing != "none":
+                    prev_losses = self._asset_consecutive_losses.get(asset, 0)
+                    self._asset_consecutive_losses[asset] = 0
+                    if prev_losses > 0:
+                        logger.info(f"[{asset}] Recovery: WIN resets loss streak (was {prev_losses})")
             else:
                 self.state.total_losses += 1
                 self.state.current_loss_streak += 1
@@ -1512,6 +1558,14 @@ class SimulatedTrader:
                     self.state.max_loss_streak,
                     self.state.current_loss_streak,
                 )
+                # Recovery sizing: increment per-asset loss streak
+                if self.recovery_sizing != "none":
+                    self._asset_consecutive_losses[asset] = self._asset_consecutive_losses.get(asset, 0) + 1
+                    next_bet = self._get_recovery_bet(asset)
+                    logger.info(
+                        f"[{asset}] Recovery: loss streak → {self._asset_consecutive_losses[asset]}, "
+                        f"next bet ${next_bet:.2f}"
+                    )
                 # Trigger pause after loss
                 if self.pause_windows_after_loss > 0:
                     self.state.pause_windows_remaining = self.pause_windows_after_loss
@@ -1808,9 +1862,9 @@ class SimulatedTrader:
             else:
                 entry_price = 1.0 - pm_yes  # buying NO
 
-            # Fixed bet size
+            # Bet size (recovery-aware for contrarian modes)
             bet_size = min(
-                self._get_scaled_bet(),
+                self._get_recovery_bet(asset),
                 self.state.current_bankroll * self.max_bet_pct,
             )
 
@@ -1946,7 +2000,7 @@ class SimulatedTrader:
             else:
                 entry_price = 1.0 - pm_yes
 
-            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_recovery_bet(asset), self.state.current_bankroll * self.max_bet_pct)
 
             # Signal metadata
             _spot_vel = sample.spot_price_change_from_open
@@ -2135,7 +2189,7 @@ class SimulatedTrader:
             # Store entry pm_yes for stop-loss delta check
             self._combo_entry_pm[asset] = pm_yes
 
-            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_recovery_bet(asset), self.state.current_bankroll * self.max_bet_pct)
 
             # Signal metadata
             prev2 = self._prev2_window_pm.get(asset, 0)
@@ -2412,7 +2466,7 @@ class SimulatedTrader:
             else:
                 entry_price = 1.0 - pm_yes
 
-            bet_size = min(self._get_scaled_bet(), self.state.current_bankroll * self.max_bet_pct)
+            bet_size = min(self._get_recovery_bet(asset), self.state.current_bankroll * self.max_bet_pct)
 
             # Signal metadata
             prev2 = self._prev2_window_pm.get(asset, 0)
@@ -2632,6 +2686,12 @@ class SimulatedTrader:
                 self.state.max_win_streak,
                 self.state.current_win_streak,
             )
+            # Recovery sizing: reset per-asset loss streak on win
+            if self.recovery_sizing != "none":
+                prev_losses = self._asset_consecutive_losses.get(asset, 0)
+                self._asset_consecutive_losses[asset] = 0
+                if prev_losses > 0:
+                    logger.info(f"[{asset}] Recovery: WIN resets loss streak (was {prev_losses})")
         else:
             self.state.total_losses += 1
             self.state.current_loss_streak += 1
@@ -2640,6 +2700,14 @@ class SimulatedTrader:
                 self.state.max_loss_streak,
                 self.state.current_loss_streak,
             )
+            # Recovery sizing: increment per-asset loss streak
+            if self.recovery_sizing != "none":
+                self._asset_consecutive_losses[asset] = self._asset_consecutive_losses.get(asset, 0) + 1
+                next_bet = self._get_recovery_bet(asset)
+                logger.info(
+                    f"[{asset}] Recovery: loss streak → {self._asset_consecutive_losses[asset]}, "
+                    f"next bet ${next_bet:.2f}"
+                )
             if self.pause_windows_after_loss > 0:
                 self.state.pause_windows_remaining = self.pause_windows_after_loss
                 logger.info(
