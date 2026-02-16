@@ -354,8 +354,21 @@ class TradingDashboard:
         dd_pct = self._metrics.get("max_drawdown_pct", state.max_drawdown_pct)
         dd_color = "red" if dd_pct < -10 else "yellow" if dd_pct < -5 else "green"
 
+        # Build bet sizing display
+        if self.trader.recovery_sizing != "none":
+            # Show recovery range: base → max across all assets
+            max_losses = max(self.trader._asset_consecutive_losses.values()) if self.trader._asset_consecutive_losses else 0
+            max_next = self.trader.base_bet * self.trader.recovery_max_multiplier
+            bet_text = Text.assemble(
+                ("Recovery: ", "dim"),
+                (f"${self.trader.base_bet:.0f}→${max_next:.0f} ", "cyan"),
+                (f"(+${self.trader.recovery_step:.0f}/L)", "dim"),
+            )
+        else:
+            bet_text = Text.assemble(("Current Bet: ", "dim"), (f"${state.current_bet_size:.2f}", "cyan"))
+
         grid.add_row(
-            Text.assemble(("Current Bet: ", "dim"), (f"${state.current_bet_size:.2f}", "cyan")),
+            bet_text,
             Text.assemble(
                 ("Base Bet: ", "dim"),
                 (f"${state.base_bet_size:.2f}", "dim"),
@@ -538,6 +551,8 @@ class TradingDashboard:
         table.add_column("P&L", justify="right", width=8)
         table.add_column("Sig", width=5)
         table.add_column("Vol", width=4)
+        if self.trader.recovery_sizing != "none":
+            table.add_column("Rec", justify="right", width=7)
 
         for asset in self.sampler.assets:
             stats = self._asset_stats.get(asset, {})
@@ -586,14 +601,22 @@ class TradingDashboard:
             else:
                 regime_str = "[dim]-[/dim]"
 
-            table.add_row(
+            row = [
                 f"[bold]{asset}[/bold]",
                 str(trades),
                 f"[{wr_color}]{win_rate:.0f}%[/{wr_color}]" if trades > 0 else "[dim]-[/dim]",
                 f"[{pnl_color}]${total_pnl:+,.0f}[/{pnl_color}]" if trades > 0 else "[dim]-[/dim]",
                 signal_str,
                 regime_str,
-            )
+            ]
+            if self.trader.recovery_sizing != "none":
+                losses = self.trader._asset_consecutive_losses.get(asset, 0)
+                next_bet = self.trader._get_recovery_bet(asset)
+                if losses > 0:
+                    row.append(f"[yellow]{losses}L[/yellow] [cyan]${next_bet:.0f}[/cyan]")
+                else:
+                    row.append(f"[dim]${next_bet:.0f}[/dim]")
+            table.add_row(*row)
 
         return Panel(table, title="Per-Asset Summary", border_style="green")
 
@@ -910,7 +933,15 @@ class TradingDashboard:
         content.append(f"{self.trader.fee_rate*100:.1f}% + {self.trader.spread_cost*100:.1f}% spread", style="cyan")
         content.append("  |  ", style="dim")
         content.append("Sizing: ", style="dim")
-        if self.trader.bet_scale_threshold > 0:
+        if self.trader.recovery_sizing != "none":
+            mode_label = "Linear" if self.trader.recovery_sizing == "linear" else "Mart 1.5x"
+            max_bet = self.trader.base_bet * self.trader.recovery_max_multiplier
+            content.append(
+                f"{mode_label} ${self.trader.base_bet:.0f}→${max_bet:.0f} "
+                f"(+${self.trader.recovery_step:.0f}/loss, cap {self.trader.recovery_max_multiplier}x)",
+                style="cyan",
+            )
+        elif self.trader.bet_scale_threshold > 0:
             scaled = self.trader._get_scaled_bet()
             content.append(
                 f"${self.trader.base_bet:.0f} → ${scaled:.0f} "
