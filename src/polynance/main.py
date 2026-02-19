@@ -222,6 +222,7 @@ class Application:
             recovery_sizing=self.trading_config.get("recovery_sizing", "none"),
             recovery_step=self.trading_config.get("recovery_step", 25.0),
             recovery_max_multiplier=self.trading_config.get("recovery_max_multiplier", 5),
+            adaptive_direction_n=self.trading_config.get("adaptive_direction_n", 0),
         )
         await self.trader.initialize()
 

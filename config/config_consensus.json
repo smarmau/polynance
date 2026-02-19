@@ -23,6 +23,7 @@
   "recovery_max_multiplier": 3,
   "skip_regimes": [],
   "skip_days": [],
+  "adaptive_direction_n": 50,
   "assets": ["BTC", "ETH", "SOL", "XRP"],
   "data_dir": "data",
   "show_dashboard": true,

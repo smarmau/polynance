@@ -129,6 +129,11 @@ class TradingConfig:
     recovery_step: float = 25.0           # linear: add this per loss (e.g. $25)
     recovery_max_multiplier: int = 5      # cap at base_bet * this (e.g. 5 → $125 max)
 
+    # Adaptive direction filter: only trade the direction with higher trailing win rate
+    # 0 = disabled, N = look at last N trades to compute bull/bear trailing WR
+    # If bull_wr >= bear_wr, only take bull trades (and vice versa)
+    adaptive_direction_n: int = 0
+
     # Regime filter: skip entry when previous window's volatility was in these regimes
     # Valid values: "low", "normal", "high", "extreme"
     # e.g. ["high", "extreme"] to only trade after low/normal vol windows
@@ -215,6 +220,7 @@ class TradingConfig:
             "recovery_sizing": self.recovery_sizing,
             "recovery_step": self.recovery_step,
             "recovery_max_multiplier": self.recovery_max_multiplier,
+            "adaptive_direction_n": self.adaptive_direction_n,
         }
 
     def save(self, path: Optional[Path] = None):

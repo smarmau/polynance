@@ -174,6 +174,8 @@ class SimulatedTrader:
         triple_xasset_min: int = DEFAULT_TRIPLE_XASSET_MIN,
         triple_pm0_bull_min: float = DEFAULT_TRIPLE_PM0_BULL_MIN,
         triple_pm0_bear_max: float = DEFAULT_TRIPLE_PM0_BEAR_MAX,
+        # Adaptive direction filter
+        adaptive_direction_n: int = 0,
     ):
         """Initialize the simulated trader.
 
@@ -277,6 +279,9 @@ class SimulatedTrader:
         self.recovery_step = recovery_step
         self.recovery_max_multiplier = recovery_max_multiplier
 
+        # Adaptive direction filter
+        self.adaptive_direction_n = adaptive_direction_n
+
         # Map time labels to t_minutes values for contrarian
         self._time_to_minutes = {
             "t0": 0.0, "t2.5": 2.5, "t5": 5.0,
@@ -320,6 +325,10 @@ class SimulatedTrader:
 
         # Recovery sizing: per-asset consecutive loss count
         self._asset_consecutive_losses: Dict[str, int] = {}
+
+        # Adaptive direction: rolling history of (direction, won) tuples
+        # Used to compute trailing bull/bear win rates
+        self._adaptive_history: List[tuple] = []  # [(direction, won), ...]
 
         # Consensus: buffer samples at consensus entry time to evaluate cross-asset
         # Maps time_key (e.g. "20260206_0445") -> {asset: {"pm_yes": float, "sample": sample, "state": state}}
@@ -470,6 +479,56 @@ class SimulatedTrader:
 
         bet = min(bet, max_bet)
         return round(bet, 2)
+
+    def _adaptive_direction_allowed(self, direction: str) -> bool:
+        """Check if the given direction is allowed by the adaptive filter.
+
+        Returns True if:
+          - adaptive_direction_n == 0 (filter disabled)
+          - not enough history yet (< adaptive_direction_n trades)
+          - the proposed direction's trailing WR >= the other direction's WR
+        """
+        n = self.adaptive_direction_n
+        if n <= 0:
+            return True
+        if len(self._adaptive_history) < n:
+            return True
+
+        recent = self._adaptive_history[-n:]
+        bull_trades = [won for d, won in recent if d == "bull"]
+        bear_trades = [won for d, won in recent if d == "bear"]
+
+        bull_wr = sum(bull_trades) / len(bull_trades) if bull_trades else 0.5
+        bear_wr = sum(bear_trades) / len(bear_trades) if bear_trades else 0.5
+
+        if direction == "bull":
+            return bull_wr >= bear_wr
+        else:
+            return bear_wr > bull_wr
+
+    def _adaptive_record_outcome(self, direction: str, won: bool):
+        """Record a trade outcome for the adaptive direction filter."""
+        if self.adaptive_direction_n > 0:
+            self._adaptive_history.append((direction, won))
+            # Keep at most 2x the window to avoid unbounded growth
+            max_len = self.adaptive_direction_n * 3
+            if len(self._adaptive_history) > max_len:
+                self._adaptive_history = self._adaptive_history[-max_len:]
+
+    def _adaptive_status(self) -> str:
+        """Return a short status string for the adaptive filter (for dashboard)."""
+        n = self.adaptive_direction_n
+        if n <= 0:
+            return ""
+        if len(self._adaptive_history) < n:
+            return f"adapt{n}: warming ({len(self._adaptive_history)}/{n})"
+        recent = self._adaptive_history[-n:]
+        bull_trades = [won for d, won in recent if d == "bull"]
+        bear_trades = [won for d, won in recent if d == "bear"]
+        bull_wr = sum(bull_trades) / len(bull_trades) if bull_trades else 0.5
+        bear_wr = sum(bear_trades) / len(bear_trades) if bear_trades else 0.5
+        favored = "BULL" if bull_wr >= bear_wr else "BEAR"
+        return f"adapt{n}: {favored} (B:{bull_wr:.0%} R:{bear_wr:.0%})"
 
     def _calculate_fees(
         self, entry_contract: float, exit_contract: float, n_contracts: float, bet_size: float
@@ -1536,6 +1595,9 @@ class SimulatedTrader:
 
             won = net_pnl > 0
 
+            # Record outcome for adaptive direction filter
+            self._adaptive_record_outcome(trade.direction, won)
+
             if won:
                 self.state.total_wins += 1
                 self.state.current_win_streak += 1
@@ -1819,8 +1881,20 @@ class SimulatedTrader:
 
         logger.info(
             f"[CONSENSUS] Phase 2 PASS: {len(confirming_assets)}/{len(buffer)} assets "
-            f"confirm {contrarian_dir.upper()} reversal → ENTERING TRADES"
+            f"confirm {contrarian_dir.upper()} reversal"
         )
+
+        # Adaptive direction filter: skip if this direction isn't favored
+        if not self._adaptive_direction_allowed(contrarian_dir):
+            logger.info(
+                f"[CONSENSUS] ADAPTIVE SKIP: {contrarian_dir.upper()} not favored. "
+                f"{self._adaptive_status()}"
+            )
+            for asset in buffer:
+                self._last_signals[asset] = f"{contrarian_dir}-adapt-skip"
+            return
+
+        logger.info(f"[CONSENSUS] → ENTERING TRADES")
 
         # Enter trades for all confirming assets
         for asset in confirming_assets:

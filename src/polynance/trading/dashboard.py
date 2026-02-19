@@ -959,6 +959,11 @@ class TradingDashboard:
             )
         else:
             content.append(f"Fixed ${self.trader.base_bet:.0f}", style="cyan")
+        # Adaptive direction status
+        if self.trader.adaptive_direction_n > 0:
+            content.append("  |  ", style="dim")
+            adapt_str = self.trader._adaptive_status()
+            content.append(adapt_str, style="magenta")
         content.append("  |  ", style="dim")
         content.append("Ctrl+C", style="bold")
         content.append(" to exit", style="dim")
