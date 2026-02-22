@@ -108,9 +108,9 @@ def temporal_split(rows, frac=0.70):
 
 # ── P&L Engine ───────────────────────────────────────────────────────────────
 
-def polymarket_crypto_fee(n_contracts, price):
-    """Polymarket 15-min crypto: C × 0.25 × (p × (1-p))^2 per side."""
-    raw = n_contracts * 0.25 * (price * (1.0 - price)) ** 2
+def polymarket_crypto_fee(dollar_amount, price):
+    """Polymarket 15-min crypto: C × 0.25 × (p × (1-p))^2 per side. C = dollar amount."""
+    raw = dollar_amount * 0.25 * (price * (1.0 - price)) ** 2
     return max(round(raw, 4), 0.0001) if raw > 0 else 0.0
 
 def pnl_trade(direction, entry_pm, exit_pm, bet=BET_SIZE):
@@ -122,7 +122,9 @@ def pnl_trade(direction, entry_pm, exit_pm, bet=BET_SIZE):
         return 0.0
     contracts = bet / entry_c
     gross = contracts * (exit_c - entry_c)
-    fees = polymarket_crypto_fee(contracts, entry_c) + polymarket_crypto_fee(contracts, exit_c)
+    entry_dollars = contracts * entry_c  # = bet
+    exit_dollars = contracts * exit_c
+    fees = polymarket_crypto_fee(entry_dollars, entry_c) + polymarket_crypto_fee(exit_dollars, exit_c)
     return gross - fees
 
 
