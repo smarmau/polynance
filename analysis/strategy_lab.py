@@ -31,7 +31,6 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 ASSETS = ["BTC", "ETH", "SOL", "XRP"]
-FEE_PER_SIDE = 0.001
 BET_SIZE = 25.0
 
 COLS = [
@@ -109,6 +108,11 @@ def temporal_split(rows, frac=0.70):
 
 # ── P&L Engine ───────────────────────────────────────────────────────────────
 
+def polymarket_crypto_fee(n_contracts, price):
+    """Polymarket 15-min crypto: C × 0.25 × (p × (1-p))^2 per side."""
+    raw = n_contracts * 0.25 * (price * (1.0 - price)) ** 2
+    return max(round(raw, 4), 0.0001) if raw > 0 else 0.0
+
 def pnl_trade(direction, entry_pm, exit_pm, bet=BET_SIZE):
     if direction == "bull":
         entry_c, exit_c = entry_pm, exit_pm
@@ -118,7 +122,7 @@ def pnl_trade(direction, entry_pm, exit_pm, bet=BET_SIZE):
         return 0.0
     contracts = bet / entry_c
     gross = contracts * (exit_c - entry_c)
-    fees = 2 * FEE_PER_SIDE * bet
+    fees = polymarket_crypto_fee(contracts, entry_c) + polymarket_crypto_fee(contracts, exit_c)
     return gross - fees
 
 
@@ -536,7 +540,7 @@ def main():
     print(SEP)
     print("  POLYNANCE STRATEGY LAB — Feb 20, 2026")
     print("  Clean backtest: NO lookahead, 70/30 temporal split")
-    print("  $25 flat bet, early exit at t12.5, fees = 2 * $0.001 * $25 = $0.05/trade")
+    print("  $25 flat bet, early exit at t12.5, fees = C * 0.25 * (p*(1-p))^2 per side")
     print(SEP)
 
     print("\nLoading data...")

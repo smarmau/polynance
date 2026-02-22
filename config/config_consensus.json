@@ -1,6 +1,6 @@
 {
   "exchange": "polymarket",
-  "fee_model": "flat",
+  "fee_model": "polymarket_crypto",
   "entry_mode": "contrarian_consensus",
   "contrarian_prev_thresh": 0.80,
   "contrarian_bull_thresh": 0.50,
@@ -21,7 +21,7 @@
   "recovery_sizing": "linear",
   "recovery_step": 25.0,
   "recovery_max_multiplier": 3,
-  "skip_regimes": [],
+  "skip_regimes": ["low", "extreme"],
   "skip_days": [],
   "adaptive_direction_n": 50,
   "assets": ["BTC", "ETH", "SOL", "XRP"],

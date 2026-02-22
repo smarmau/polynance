@@ -530,6 +530,12 @@ class SimulatedTrader:
         favored = "BULL" if bull_wr >= bear_wr else "BEAR"
         return f"adapt{n}: {favored} (B:{bull_wr:.0%} R:{bear_wr:.0%})"
 
+    @staticmethod
+    def _polymarket_crypto_fee(n_contracts: float, price: float) -> float:
+        """Polymarket 15-min crypto fee: C × 0.25 × (p × (1-p))^2, rounded to 4 dp, min 0.0001."""
+        raw = n_contracts * 0.25 * (price * (1.0 - price)) ** 2
+        return max(round(raw, 4), 0.0001) if raw > 0 else 0.0
+
     def _calculate_fees(
         self, entry_contract: float, exit_contract: float, n_contracts: float, bet_size: float
     ) -> float:
@@ -549,8 +555,14 @@ class SimulatedTrader:
             entry_fee = math.ceil(0.07 * n_contracts * entry_contract * (1 - entry_contract) * 100) / 100
             exit_fee = math.ceil(0.07 * n_contracts * exit_contract * (1 - exit_contract) * 100) / 100
             return entry_fee + exit_fee
+        elif self.fee_model == "polymarket_crypto":
+            # Polymarket 15-min crypto: fee = C × 0.25 × (p × (1-p))^2 per side
+            # Max effective rate ~1.56% at p=0.50, decreases toward extremes
+            entry_fee = self._polymarket_crypto_fee(n_contracts, entry_contract)
+            exit_fee = self._polymarket_crypto_fee(n_contracts, exit_contract)
+            return entry_fee + exit_fee
         else:
-            # Flat model (Polymarket): fee_rate on contract premium + spread on trade value
+            # Flat model: fee_rate on contract premium + spread on trade value
             entry_fee = entry_contract * n_contracts * self.fee_rate
             exit_fee = exit_contract * n_contracts * self.fee_rate
             entry_spread = self.spread_cost * bet_size
