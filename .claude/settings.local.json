@@ -32,7 +32,14 @@
       "WebFetch(domain:www.pmxt.dev)",
       "Bash(for db in btc eth sol xrp)",
       "Bash(do)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(~/.local/bin/polymarket clob create-order --help)",
+      "Bash(dpkg -l sqlite3)",
+      "Bash(apt list --installed)",
+      "Bash(for f in /home/smarm/Music/polynance/data/btc.db /home/smarm/Music/polynance/data/eth.db /home/smarm/Music/polynance/data/sol.db /home/smarm/Music/polynance/data/xrp.db)",
+      "Bash(do echo \"=== $f ===\")",
+      "Bash(while ps -p 50318)",
+      "Bash(do sleep 10)"
     ]
   }
 }

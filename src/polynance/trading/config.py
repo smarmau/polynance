@@ -111,7 +111,7 @@ class TradingConfig:
     # Live trading (CAUTION: places real orders with real money)
     live_trading: bool = False  # False = dry-run only (default, safe)
 
-    # Wallet signature type for py-clob-client:
+    # Wallet signature type for polymarket CLI:
     #   0 = EOA / external wallet (MetaMask, hardware wallet) — default
     #   1 = Polymarket proxy / email wallet (the web app wallet)
     #   2 = Browser wallet proxy / Gnosis Safe
@@ -124,15 +124,78 @@ class TradingConfig:
     pause_windows_after_loss: int = 2  # Skip N windows after any loss
 
     # Recovery sizing: step up bet size after consecutive per-asset losses
-    # "none" = flat base_bet, "linear" = base + step*losses, "mart_1.5x" = base * 1.5^losses
+    # "none" = flat base_bet, "linear" = base + (step × base × losses), "mart_1.5x" = base * 1.5^losses
     recovery_sizing: str = "none"
-    recovery_step: float = 25.0           # linear: add this per loss (e.g. $25)
-    recovery_max_multiplier: int = 5      # cap at base_bet * this (e.g. 5 → $125 max)
+    recovery_step: float = 1.0            # linear: multiplier of base_bet per loss (1.0 = +1× base per loss)
+    recovery_max_multiplier: int = 5      # cap at base_bet * this (e.g. 3 → 3× base max)
 
     # Adaptive direction filter: only trade the direction with higher trailing win rate
     # 0 = disabled, N = look at last N trades to compute bull/bear trailing WR
     # If bull_wr >= bear_wr, only take bull trades (and vice versa)
     adaptive_direction_n: int = 0
+
+    # --- Momentum Confirmation ---
+    # Require pm_price_momentum (pm_t5 - pm_t0) to confirm trade direction
+    # Bull: momentum >= +threshold, Bear: momentum <= -threshold
+    # 0 = disabled. Typical values: 0.03, 0.05, 0.10
+    momentum_min_threshold: float = 0.0
+
+    # --- Confidence-Scaled Sizing ---
+    # Scale bet size by momentum strength: scale = 1 + min(|momentum| / ref, max - 1)
+    # 1.0 = flat sizing (disabled). Typical values: 1.5, 2.0, 3.0
+    confidence_scaling_max: float = 1.0
+    confidence_scaling_ref: float = 0.20  # momentum value at which max scale is reached
+
+    # --- Daily Loss Limit ---
+    # Stop trading for the day after cumulative daily losses exceed this (USD, 0 = disabled)
+    daily_loss_limit: float = 0.0
+
+    # --- Asymmetric Direction Sizing ---
+    # Multiply bet size by direction-specific factor (1.0 = no change)
+    bear_size_mult: float = 1.0
+    bull_size_mult: float = 1.0
+
+    # --- Anti-Martingale ---
+    # After consecutive wins, scale bet by this multiplier per win (0 = disabled)
+    # e.g. 1.5 means: 0 wins=1x, 1 win=1.5x, 2 wins=2.25x, etc.
+    anti_mart_mult: float = 0.0
+    anti_mart_max: float = 5.0  # cap the anti-martingale multiplier
+
+    # --- Hold to Resolution ---
+    # If True, hold position to binary resolution instead of early exit at t12.5
+    hold_to_resolution: bool = False
+
+    # --- Sweet Spot Filter ---
+    # Require t0 pm_yes to be within this band of 0.50 (0 = disabled)
+    # e.g. 0.15 means t0 must be in [0.35, 0.65]
+    sweet_spot_band: float = 0.0
+
+    # --- Prior Momentum Filter ---
+    # Require the previous window's trend to still be building at entry.
+    # For bear: (prev_pm - prev2_pm) > prior_mom_min for at least 1 asset.
+    # For bull: (prev2_pm - prev_pm) > prior_mom_min for at least 1 asset.
+    # Uses prev_pm_t12_5 and prev2_pm_t12_5 — both valid at t0 (no look-ahead).
+    prior_mom_filter: bool = False
+    prior_mom_min: float = 0.03
+
+    # --- Tiered Exit ---
+    # When n_agree >= tiered_resolution_threshold, hold to binary resolution.
+    # When n_agree < threshold, take the early mid-market exit at t12.5.
+    # Overrides hold_to_resolution on a per-group basis.
+    tiered_exit: bool = False
+    tiered_resolution_threshold: int = 3
+
+    # --- Consecutive Loss Circuit Breaker ---
+    # Sit out one window after this many consecutive group losses (0 = disabled).
+    # Note: backtest data shows WR *rises* after losses — this costs edge but
+    # reduces psychological risk of extended drawdown runs.
+    max_consec_losses: int = 0
+
+    # --- UTC Hour Whitelist ---
+    # Only enter trades in windows starting in these UTC hours.
+    # Empty list = all hours allowed.
+    # e.g. [20,21,22,23,0,1,2,3,4,5,6,7] for overnight/off-hours trading.
+    allowed_hours: list = field(default_factory=list)
 
     # Regime filter: skip entry when previous window's volatility was in these regimes
     # Valid values: "low", "normal", "high", "extreme"
@@ -142,6 +205,9 @@ class TradingConfig:
     # Day-of-week filter: skip entry on these days (0=Mon..6=Sun)
     # e.g. [5] to skip Saturdays (data shows Saturday is consistently unprofitable)
     skip_days: list = field(default_factory=lambda: [5])
+
+    # Auto-redeem settled positions after each window (live trading only)
+    redeem_on_window_complete: bool = True
 
     # Assets to trade
     assets: list = field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
@@ -221,6 +287,23 @@ class TradingConfig:
             "recovery_step": self.recovery_step,
             "recovery_max_multiplier": self.recovery_max_multiplier,
             "adaptive_direction_n": self.adaptive_direction_n,
+            "momentum_min_threshold": self.momentum_min_threshold,
+            "confidence_scaling_max": self.confidence_scaling_max,
+            "confidence_scaling_ref": self.confidence_scaling_ref,
+            "daily_loss_limit": self.daily_loss_limit,
+            "bear_size_mult": self.bear_size_mult,
+            "bull_size_mult": self.bull_size_mult,
+            "anti_mart_mult": self.anti_mart_mult,
+            "anti_mart_max": self.anti_mart_max,
+            "hold_to_resolution": self.hold_to_resolution,
+            "sweet_spot_band": self.sweet_spot_band,
+            "prior_mom_filter": self.prior_mom_filter,
+            "prior_mom_min": self.prior_mom_min,
+            "tiered_exit": self.tiered_exit,
+            "tiered_resolution_threshold": self.tiered_resolution_threshold,
+            "max_consec_losses": self.max_consec_losses,
+            "allowed_hours": self.allowed_hours,
+            "redeem_on_window_complete": self.redeem_on_window_complete,
         }
 
     def save(self, path: Optional[Path] = None):

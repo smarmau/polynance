@@ -22,7 +22,8 @@ dependencies = [
 
 [project.optional-dependencies]
 live = [
-    "py-clob-client>=0.5.0",
+    # py-clob-client no longer needed — live trading uses polymarket CLI binary
+    # Kept for backwards compat if anyone has [live] in their pip install
 ]
 dev = [
     "pytest>=7.4.0",

@@ -362,7 +362,7 @@ class TradingDashboard:
             bet_text = Text.assemble(
                 ("Recovery: ", "dim"),
                 (f"${self.trader.base_bet:.0f}→${max_next:.0f} ", "cyan"),
-                (f"(+${self.trader.recovery_step:.0f}/L)", "dim"),
+                (f"(+${self.trader.base_bet * self.trader.recovery_step:.2g}/L)", "dim"),
             )
         else:
             bet_text = Text.assemble(("Current Bet: ", "dim"), (f"${state.current_bet_size:.2f}", "cyan"))

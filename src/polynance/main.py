@@ -1,5 +1,8 @@
 """Main entry point for polynance."""
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import argparse
 import asyncio
 import logging
@@ -223,6 +226,23 @@ class Application:
             recovery_step=self.trading_config.get("recovery_step", 25.0),
             recovery_max_multiplier=self.trading_config.get("recovery_max_multiplier", 5),
             adaptive_direction_n=self.trading_config.get("adaptive_direction_n", 0),
+            momentum_min_threshold=self.trading_config.get("momentum_min_threshold", 0.0),
+            confidence_scaling_max=self.trading_config.get("confidence_scaling_max", 1.0),
+            confidence_scaling_ref=self.trading_config.get("confidence_scaling_ref", 0.20),
+            daily_loss_limit=self.trading_config.get("daily_loss_limit", 0.0),
+            bear_size_mult=self.trading_config.get("bear_size_mult", 1.0),
+            bull_size_mult=self.trading_config.get("bull_size_mult", 1.0),
+            anti_mart_mult=self.trading_config.get("anti_mart_mult", 0.0),
+            anti_mart_max=self.trading_config.get("anti_mart_max", 5.0),
+            hold_to_resolution=self.trading_config.get("hold_to_resolution", False),
+            sweet_spot_band=self.trading_config.get("sweet_spot_band", 0.0),
+            prior_mom_filter=self.trading_config.get("prior_mom_filter", False),
+            prior_mom_min=self.trading_config.get("prior_mom_min", 0.03),
+            tiered_exit=self.trading_config.get("tiered_exit", False),
+            tiered_resolution_threshold=self.trading_config.get("tiered_resolution_threshold", 3),
+            max_consec_losses=self.trading_config.get("max_consec_losses", 0),
+            allowed_hours=self.trading_config.get("allowed_hours"),
+            redeem_on_window_complete=self.trading_config.get("redeem_on_window_complete", True),
         )
         await self.trader.initialize()
 
@@ -356,10 +376,16 @@ class Application:
                     self.trader.consensus_exit_time, 12.5
                 )
 
+                # Always capture t0 for momentum/sweet-spot (non-exclusive)
+                if sample.t_minutes == 0.0:
+                    await self.trader.on_sample_at_consensus_t0(asset, sample, state)
+
                 if sample.t_minutes == entry_t:
                     await self.trader.on_sample_at_consensus_entry(asset, sample, state)
                 elif sample.t_minutes == exit_t:
-                    await self.trader.on_sample_at_consensus_exit(asset, sample, state)
+                    # Skip early exit when holding to binary resolution
+                    if not self.trader.hold_to_resolution:
+                        await self.trader.on_sample_at_consensus_exit(asset, sample, state)
             elif entry_mode == "contrarian":
                 # Contrarian: entry and exit at configured sample points
                 entry_t = self.trader._time_to_minutes.get(
@@ -410,6 +436,13 @@ class Application:
                 await self.trader.on_window_complete(asset, window)
             except Exception as e:
                 logger.error(f"[{asset}] Trading error: {e}", exc_info=True)
+
+            # Auto-redeem settled positions (rate-limited internally)
+            if self.trading_config.get("live_trading") and self.trading_config.get("redeem_on_window_complete", True):
+                try:
+                    await self.trader.try_redeem_settled()
+                except Exception as e:
+                    logger.error(f"Redeem error: {e}", exc_info=True)
 
     async def run(self):
         """Run the main application loop."""

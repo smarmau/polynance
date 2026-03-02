@@ -27,7 +27,7 @@ Requires **Python 3.11+**.
 
 | Exchange | Config Value | Fee Model | Market Data | Live Trading |
 |----------|-------------|-----------|-------------|-------------|
-| Polymarket | `"exchange": "polymarket"` | Flat (fee_rate + spread) | Direct API | Via py-clob-client |
+| Polymarket | `"exchange": "polymarket"` | Flat (fee_rate + spread) | Direct API | Via polymarket CLI |
 | Kalshi | `"exchange": "kalshi"` | Probability-weighted | Public REST API | Not yet |
 
 Set `"exchange"` and `"fee_model"` in your config JSON. Kalshi uses the public API (no authentication required for market data).
@@ -41,24 +41,19 @@ polynance-trade --config config/config_consensus_kalshi.json   # Kalshi
 
 ## Live Trading (Polymarket)
 
-Polynance supports live order placement on Polymarket via [py-clob-client](https://github.com/Polymarket/py-clob-client), Polymarket's official Python CLOB API client. **This is disabled by default** — the bot runs in dry-run (simulation) mode unless explicitly enabled.
+Polynance supports live order placement on Polymarket via the [polymarket CLI](https://github.com/Polymarket/polymarket-cli). **This is disabled by default** — the bot runs in dry-run (simulation) mode unless explicitly enabled.
 
 ### Setup
 
 ```bash
-# 1. Install with live trading support
-pip install -e ".[live]"
+# 1. Install the polymarket CLI
+curl -sSL https://raw.githubusercontent.com/Polymarket/polymarket-cli/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 
-# 2. Set your Polymarket credentials
-export POLYMARKET_PRIVATE_KEY="your-polygon-private-key"
-
-# Optional: pre-set API creds (otherwise derived automatically from private key)
-export CLOB_API_KEY="your-api-key"
-export CLOB_SECRET="your-api-secret"
-export CLOB_PASS_PHRASE="your-api-passphrase"
-
-# Optional: funder address if using a separate funding wallet
-export POLYMARKET_FUNDER_ADDRESS="your-funder-address"
+# 2. Set credentials in .env (or export directly)
+POLYMARKET_PRIVATE_KEY="your-polygon-private-key"
+POLYMARKET_SIGNATURE_TYPE=1              # 0=EOA, 1=proxy wallet, 2=Gnosis Safe
+POLYMARKET_FUNDER_ADDRESS="your-proxy-wallet-address"  # proxy wallet holding funds
 
 # 3. Enable in config
 ```
@@ -68,7 +63,9 @@ Add to your config JSON:
 ```json
 {
   "exchange": "polymarket",
-  "live_trading": true
+  "live_trading": true,
+  "signature_type": 1,
+  "redeem_on_window_complete": true
 }
 ```
 
@@ -76,27 +73,42 @@ Add to your config JSON:
 
 When `live_trading` is enabled:
 1. The bot still runs the full simulation (tracking P&L, win rate, drawdown, etc.)
-2. **In addition**, it places real limit orders on Polymarket via py-clob-client at entry and exit
-3. Entry orders buy YES/NO contracts at the signal price
-4. Exit orders sell the position at the early-exit price
-5. If a live order fails, the simulation continues unaffected
+2. **In addition**, it places real orders on Polymarket via the polymarket CLI
+3. Entry orders buy YES/NO contracts (GTC limit orders) at the signal price
+4. Exit orders use **FAK (Fill-And-Kill) sell loops** that drain the position via best available bids
+5. **Wallet balance** from Polymarket is the source of truth for bankroll tracking
+6. **Settled positions** are auto-redeemed via the gasless relayer after each window
+7. **Losing positions** are cleaned up hourly to keep the portfolio tidy
+8. If a live order fails, the simulation continues unaffected
+
+### Position Lifecycle
+
+```
+Entry signal → GTC buy order → poll for fill → hold position
+  → Exit signal → FAK sell loop (up to 5 attempts) → position drained
+  → Window resolves → check for redeemable positions → gasless redeem via relayer
+  → Hourly → sweep zero-value losers → clean up portfolio
+  → Balance refresh → bankroll synced from Polymarket
+```
 
 ### Safety
 
 - `live_trading` defaults to `false` — you must explicitly enable it
-- py-clob-client is an optional dependency (`pip install -e ".[live]"`)
+- The polymarket CLI must be installed separately (`~/.local/bin/polymarket`)
 - Missing `POLYMARKET_PRIVATE_KEY` gracefully disables live trading with a warning
 - Live order errors are logged but never crash the bot
 - The simulation always runs regardless of live order outcomes
+- Redemption is rate-limited (once per 15 min for winners, once per hour for losers)
+- Relayer circuit breaker protects against quota exhaustion
 
 ### Authentication
 
-Polymarket uses EIP-712 signatures on the Polygon network for order placement:
-- **Private Key**: Your Polygon wallet private key (signs order transactions)
-- **API Credentials**: CLOB API key/secret/passphrase (auto-derived from private key if not provided)
-- **Funder Address**: Optional separate funding wallet address
+The polymarket CLI handles all signing and CLOB API communication:
+- **Private Key**: Your Polygon wallet private key (signs order transactions via CLI)
+- **Signature Type**: Wallet type (0=EOA, 1=proxy wallet, 2=Gnosis Safe)
+- **Funder Address**: Proxy wallet address that holds funds and positions
 
-These are read from environment variables or can be passed programmatically.
+These are read from `.env` via python-dotenv or from environment variables.
 
 ## Entry Modes
 
@@ -229,11 +241,31 @@ polynance-trade --init-config
   "bet_scale_increase": 0.20,       // +20% per threshold step
 
   // --- Live trading (CAUTION: real money) ---
-  "live_trading": false,            // true = place real orders via py-clob-client (default: false)
+  "live_trading": false,            // true = place real orders via polymarket CLI (default: false)
+  "signature_type": 1,              // 0=EOA, 1=proxy wallet, 2=Gnosis Safe
+  "redeem_on_window_complete": true, // auto-redeem settled positions after each window
 
   // --- Trading mechanics ---
   "min_trajectory": 0.20,           // minimum pm move from t0 to entry (trajectory filter)
   "pause_windows_after_loss": 1,    // skip N windows after any loss
+
+  // --- Regime & day filters ---
+  "skip_regimes": ["high", "extreme"],  // skip windows after these vol regimes (low/normal/high/extreme)
+  "skip_days": [5],                     // skip Saturdays (0=Mon, 5=Sat, 6=Sun)
+
+  // --- Prior momentum filter (contrarian_consensus only) ---
+  "prior_mom_filter": false,            // require trend still building at t0 (no look-ahead)
+  "prior_mom_min": 0.03,               // minimum |prev_pm - prev2_pm| to pass
+
+  // --- Tiered exit (contrarian_consensus only) ---
+  "tiered_exit": false,                 // hold to binary resolution when n_agree >= threshold
+  "tiered_resolution_threshold": 3,    // minimum agreeing assets for binary resolution
+
+  // --- Consecutive loss circuit breaker ---
+  "max_consec_losses": 0,              // pause 1 window after N consecutive group losses (0=off)
+
+  // --- UTC hour whitelist ---
+  "allowed_hours": [],                  // only trade in these UTC hours; [] = all hours
 
   // --- System ---
   "assets": ["BTC", "ETH", "SOL", "XRP"],
@@ -364,7 +396,9 @@ polynance/
 │   ├── clients/
 │   │   ├── exchange.py            # ExchangeClient ABC + factory + trading types
 │   │   ├── polymarket.py          # Polymarket CLOB API client (market data)
-│   │   ├── polymarket_adapter.py  # Polymarket adapter (data + live trading via py-clob-client)
+│   │   ├── polymarket_adapter.py  # Polymarket adapter (data + live trading via CLI)
+│   │   ├── polymarket_claims.py   # Position discovery + gasless redemption
+│   │   ├── polymarket_relayer.py  # Gasless proxy wallet relayer (batch redeem)
 │   │   ├── kalshi_adapter.py      # Kalshi ExchangeClient adapter (public REST API)
 │   │   └── binance.py             # Binance spot price client
 │   ├── db/
@@ -386,7 +420,10 @@ polynance/
 │   └── dashboard/
 │       └── terminal.py            # Data-collection-only dashboard
 ├── analysis/
-│   ├── backtest_suite.py          # Strategy backtesting framework
+│   ├── backtest_suite.py          # Strategy backtesting framework (legacy)
+│   ├── valid_momentum_backtest.py # Study 2: clean E-series filters (no look-ahead)
+│   ├── creative_backtest.py       # Study 3: novel exits/sizing (tiered, off-hours, accel)
+│   ├── filter_backtest.py         # Combined: vol/loss filters, 54 strategies
 │   ├── slippage_model.py          # Spread/slippage impact modeling
 │   └── advanced_strategy_ideas.py # Experimental strategy backtests
 ├── scripts/
@@ -395,7 +432,13 @@ polynance/
 │   ├── config.json                # Default config (accel_dbl, Polymarket)
 │   ├── config_consensus.json      # Contrarian consensus (Polymarket)
 │   ├── config_consensus_kalshi.json # Contrarian consensus (Kalshi)
-│   └── config_triple.json         # Triple filter (Polymarket)
+│   ├── config_triple.json         # Triple filter (Polymarket)
+│   ├── config_e8_antimart.json    # E8: high threshold + prior momentum + anti-mart
+│   ├── config_tiered_vol.json     # Tiered exit + skip high/extreme vol
+│   ├── config_e8_daily100.json    # E8: high threshold + prior momentum + daily limit
+│   ├── config_e7_priormom.json    # E7: high threshold + prior momentum
+│   ├── config_cb_tiered.json      # Tiered exit + 2-loss circuit breaker
+│   └── config_offhours_vol.json   # Off-hours (20:00–08:00 UTC) + skip high/extreme vol
 ├── data/                          # SQLite databases (gitignored)
 ├── pyproject.toml                 # Package config and dependencies
 └── README.md
@@ -418,6 +461,77 @@ python analysis/advanced_strategy_ideas.py
 
 Results are printed to stdout. Charts saved to `analysis/reports/`.
 
+Backtest scripts:
+
+| Script | Description |
+|--------|-------------|
+| `analysis/valid_momentum_backtest.py` | Study 2 — validates E-series filters (no look-ahead bias) |
+| `analysis/creative_backtest.py` | Study 3 — novel exit/sizing strategies (tiered, off-hours, accel) |
+| `analysis/filter_backtest.py` | Combined study — vol/loss filters on top of best strategies |
+
+---
+
+## Winning Strategies (Backtested Jan 24 – Mar 1, 2026)
+
+37-day dataset · 4 assets (BTC/ETH/SOL/XRP) · 3,411 windows · 70/30 time-series train/test split at Feb 19.
+All strategies: `entry_mode=contrarian_consensus`, entry at t0, exit at t12.5. Fees: 1% per leg, 0.5% spread.
+
+### Strategy Profiles
+
+| Config File | Test P&L | Test WR | Max DD | Description |
+|-------------|----------|---------|--------|-------------|
+| [`config_e8_antimart.json`](config/config_e8_antimart.json) | **+$2,221** | 57.7% | -30.2% | High threshold (prev≥0.85) + prior momentum filter + anti-martingale 1.5× |
+| [`config_tiered_vol.json`](config/config_tiered_vol.json) | +$1,755 | 61.1% | -19.1% | Skip high+extreme vol + tiered exit (hold to resolution when 3+ assets agree) |
+| [`config_e8_daily100.json`](config/config_e8_daily100.json) | +$1,641 | 60.1% | -23.8% | High threshold + prior momentum + skip extreme vol + $100/day loss limit |
+| [`config_e7_priormom.json`](config/config_e7_priormom.json) | +$1,635 | 60.0% | -24.7% | High threshold (prev≥0.85) + prior momentum filter + $100/day loss limit |
+| [`config_cb_tiered.json`](config/config_cb_tiered.json) | +$1,607 | 60.7% | -17.6% | Tiered exit + 2-consecutive-loss circuit breaker + $100/day loss limit |
+| [`config_offhours_vol.json`](config/config_offhours_vol.json) | +$1,489 | **61.6%** | **-15.1%** | Skip high+extreme vol + UTC 20:00–08:00 only — **best risk-adjusted** |
+
+All six are profitable in both train and test sets (robust to the 70/30 split).
+
+### Usage
+
+```bash
+# Best risk-adjusted (lowest drawdown, 61.6% WR, overnight hours only)
+polynance-trade --config config/config_offhours_vol.json
+
+# Highest absolute P&L (larger drawdown due to anti-martingale scaling)
+polynance-trade --config config/config_e8_antimart.json
+
+# Best balance: strong P&L with controlled drawdown
+polynance-trade --config config/config_tiered_vol.json
+```
+
+### New Parameters (added Feb 2026)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `prior_mom_filter` | bool | `false` | Require the previous window's trend to still be building. For bear: `prev_pm − prev2_pm > prior_mom_min` for at least 1 asset. Uses prev and prev2 PM prices — **no look-ahead bias**. |
+| `prior_mom_min` | float | `0.03` | Minimum delta for prior momentum filter. |
+| `tiered_exit` | bool | `false` | When `n_agree ≥ tiered_resolution_threshold`, hold to binary outcome (0 or 1); otherwise take early exit at t12.5. Captures asymmetric payoff on strong consensus. |
+| `tiered_resolution_threshold` | int | `3` | Minimum agreeing assets to trigger tiered binary resolution. |
+| `max_consec_losses` | int | `0` | Pause one window after this many consecutive group losses (0 = disabled). **Note:** raw data shows WR *rises* after loss runs — this is a risk-management feature, not an edge-enhancer. |
+| `allowed_hours` | list | `[]` | UTC hours in which to enter trades (empty = all hours). e.g. `[20,21,22,23,0,1,2,3,4,5,6,7]` for overnight-only trading. |
+| `redeem_on_window_complete` | bool | `true` | Auto-redeem settled positions after each window (live trading only). Includes hourly loser cleanup. |
+
+### Key Findings
+
+**Volatility regime WR (raw data, all signals):**
+- `normal`: 58.2% — best regime
+- `low`: 55.2%
+- `high`: 52.9%
+- `extreme`: 48.5% — below break-even
+
+Skipping `high` and `extreme` vol windows adds ~2.6pp WR. This is the single most impactful filter.
+
+**Off-hours edge:** Windows starting between 20:00–08:00 UTC (US/EU markets less active) show consistently better WR than peak hours. Combining this with vol filtering gives the best risk-adjusted profile.
+
+**Tiered exit payoff:** When 3+ assets agree, the market hasn't fully reverted by t12.5 but resolves correctly at binary outcome. Holding to resolution captures this extra payoff on high-confidence signals.
+
+**Counter-intuitive: WR rises after losing streaks.** Consecutive group losses → higher WR on the next signal. Circuit breakers (`max_consec_losses`) sacrifice real edge for psychological comfort during drawdowns.
+
+---
+
 ## Dependencies
 
 Core:
@@ -427,13 +541,14 @@ Core:
 - `matplotlib`, `seaborn` (charting)
 - `python-dotenv`, `pytz` (utilities)
 
-Live trading (optional):
-- `py-clob-client` (Polymarket's official CLOB API client)
+Live trading (requires separate install):
+- `polymarket` CLI (`~/.local/bin/polymarket`) — handles order signing and CLOB API
+- `web3`, `eth-account` (for gasless relayer redemption signing)
 
 Dev (optional):
 - `pytest`, `pytest-asyncio`, `black`, `ruff`
 
-Install extras: `pip install -e ".[live]"` or `pip install -e ".[dev]"`
+Install extras: `pip install -e ".[dev]"`
 
 ## Disclaimer
 

@@ -8,6 +8,7 @@ exchange in parallel with the simulation tracking.
 import asyncio
 import logging
 import math
+import os
 from datetime import datetime, timezone
 from typing import Optional, Dict, List, TYPE_CHECKING
 
@@ -17,8 +18,10 @@ from .models import SimulatedTrade, TradingState, PerAssetStats
 from .database import TradingDatabase
 from .bet_sizing import SlowGrowthSizer
 
+from ..clients.exchange import OrderResult
+
 if TYPE_CHECKING:
-    from ..clients.exchange import ExchangeClient, OrderResult
+    from ..clients.exchange import ExchangeClient
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +166,7 @@ class SimulatedTrader:
         skip_days: Optional[list] = None,
         # Recovery sizing: step up bet after per-asset losses
         recovery_sizing: str = "none",      # "none", "linear", "mart_1.5x"
-        recovery_step: float = 25.0,        # linear: add this $ per loss
+        recovery_step: float = 1.0,         # linear: add this multiple of base_bet per loss (e.g. 1.0 = +1× base)
         recovery_max_multiplier: int = 5,   # cap at base_bet * this
         # Triple filter
         triple_prev_thresh: float = DEFAULT_TRIPLE_PREV_THRESH,
@@ -176,6 +179,35 @@ class SimulatedTrader:
         triple_pm0_bear_max: float = DEFAULT_TRIPLE_PM0_BEAR_MAX,
         # Adaptive direction filter
         adaptive_direction_n: int = 0,
+        # Momentum confirmation
+        momentum_min_threshold: float = 0.0,
+        # Confidence-scaled sizing
+        confidence_scaling_max: float = 1.0,
+        confidence_scaling_ref: float = 0.20,
+        # Daily loss limit
+        daily_loss_limit: float = 0.0,
+        # Asymmetric direction sizing
+        bear_size_mult: float = 1.0,
+        bull_size_mult: float = 1.0,
+        # Anti-martingale
+        anti_mart_mult: float = 0.0,
+        anti_mart_max: float = 5.0,
+        # Hold to binary resolution
+        hold_to_resolution: bool = False,
+        # Sweet spot filter
+        sweet_spot_band: float = 0.0,
+        # Prior momentum filter: require trend still building at entry
+        prior_mom_filter: bool = False,
+        prior_mom_min: float = 0.03,
+        # Tiered exit: hold to resolution if n_agree >= threshold, else early exit
+        tiered_exit: bool = False,
+        tiered_resolution_threshold: int = 3,
+        # Consecutive loss circuit breaker (0 = disabled)
+        max_consec_losses: int = 0,
+        # UTC hour whitelist (empty = all hours)
+        allowed_hours: Optional[list] = None,
+        # Auto-redeem settled positions after each window (live trading only)
+        redeem_on_window_complete: bool = True,
     ):
         """Initialize the simulated trader.
 
@@ -282,6 +314,52 @@ class SimulatedTrader:
         # Adaptive direction filter
         self.adaptive_direction_n = adaptive_direction_n
 
+        # Momentum confirmation
+        self.momentum_min_threshold = momentum_min_threshold
+
+        # Confidence-scaled sizing
+        self.confidence_scaling_max = confidence_scaling_max
+        self.confidence_scaling_ref = confidence_scaling_ref
+
+        # Daily loss limit
+        self.daily_loss_limit = daily_loss_limit
+
+        # Asymmetric direction sizing
+        self.bear_size_mult = bear_size_mult
+        self.bull_size_mult = bull_size_mult
+
+        # Anti-martingale
+        self.anti_mart_mult = anti_mart_mult
+        self.anti_mart_max = anti_mart_max
+
+        # Hold to binary resolution
+        self.hold_to_resolution = hold_to_resolution
+
+        # Sweet spot filter
+        self.sweet_spot_band = sweet_spot_band
+
+        # Prior momentum filter
+        self.prior_mom_filter = prior_mom_filter
+        self.prior_mom_min = prior_mom_min
+
+        # Tiered exit
+        self.tiered_exit = tiered_exit
+        self.tiered_resolution_threshold = tiered_resolution_threshold
+
+        # Consecutive loss circuit breaker
+        self.max_consec_losses = max_consec_losses
+
+        # UTC hour whitelist
+        self.allowed_hours = set(allowed_hours) if allowed_hours else set()
+
+        # Auto-redeem settled positions after each window
+        self.redeem_on_window_complete = redeem_on_window_complete
+        self._last_redeem_time: Optional[datetime] = None
+        self._last_loser_cleanup_time: Optional[datetime] = None
+        self._redeem_creds_warned_at: Optional[datetime] = None
+        # Funder/proxy wallet address for position queries
+        self._funder_address = os.getenv("POLYMARKET_FUNDER_ADDRESS", "")
+
         # Map time labels to t_minutes values for contrarian
         self._time_to_minutes = {
             "t0": 0.0, "t2.5": 2.5, "t5": 5.0,
@@ -357,6 +435,29 @@ class SimulatedTrader:
         # Triple filter: store t0 pm_yes for PM0 confirmation check
         self._triple_t0_pm: Dict[str, float] = {}
 
+        # Consensus: store pm_yes at t0 per asset for momentum/sweet-spot checks
+        # Maps asset -> pm_yes at t0 of current window
+        self._consensus_t0_pm: Dict[str, float] = {}
+
+        # Daily P&L tracking for daily loss limit
+        # Maps date string "YYYY-MM-DD" -> cumulative net P&L for that day
+        self._daily_pnl: Dict[str, float] = {}
+
+        # Tiered exit: per-asset binary resolution flag
+        # True = hold to binary resolution; False = early exit at t12.5
+        self._trade_use_resolution: Dict[str, bool] = {}
+
+        # Group loss circuit breaker: track group-level P&L for max_consec_losses
+        self._group_consec_losses: int = 0
+        self._trade_group_key: Dict[str, str] = {}      # asset -> time_key
+        self._group_entered_assets: Dict[str, set] = {}  # time_key -> pending assets
+        self._group_pnl_acc: Dict[str, float] = {}       # time_key -> accumulated P&L
+
+        # Session-start wallet balance (set once on first live balance snapshot)
+        # Used as the baseline for bet scaling so config initial_bankroll doesn't
+        # misalign when the actual wallet has a different starting balance.
+        self._session_start_bankroll: Optional[float] = None
+
     async def initialize(self):
         """Load or initialize trading state from database."""
         logger.info("Initializing simulated trader...")
@@ -424,10 +525,47 @@ class SimulatedTrader:
             if self.open_trades:
                 logger.info(f"Keeping {len(self.open_trades)} trade(s) as open positions")
 
-        # Live trading: snapshot wallet balance at startup and cancel stale orders
-        if self.live_trading and self.exchange and self.exchange.supports_trading:
-            await self._snapshot_wallet_balance(label="session_start")
-            await self._cancel_stale_orders()
+        # Live trading: verify exchange connectivity, snapshot balance, cancel stale orders
+        if self.live_trading:
+            if not self.exchange:
+                logger.critical(
+                    "LIVE TRADING ENABLED but no exchange client provided! "
+                    "Orders will NOT be placed."
+                )
+            elif not self.exchange.supports_trading:
+                logger.critical(
+                    "LIVE TRADING ENABLED but exchange.supports_trading=False! "
+                    "Check POLYMARKET_PRIVATE_KEY and polymarket CLI installation. "
+                    "Orders will NOT be placed."
+                )
+            else:
+                logger.info("=" * 50)
+                logger.info("LIVE TRADING VERIFICATION")
+                try:
+                    balances = await self.exchange.fetch_balance()
+                    if balances:
+                        for b in balances:
+                            logger.info(
+                                f"  Wallet: {b.currency} balance=${b.total:.2f} "
+                                f"available=${b.available:.2f}"
+                            )
+                    else:
+                        logger.warning("  No balance info returned — verify API credentials")
+                    await self._cancel_stale_orders()
+                    logger.info("  Live trading verification PASSED")
+                except Exception as e:
+                    logger.critical(
+                        f"  Live trading verification FAILED: {e}\n"
+                        f"  Orders may fail at runtime. Check API credentials.",
+                        exc_info=True,
+                    )
+
+                # Check redemption readiness
+                if self.redeem_on_window_complete:
+                    await self._check_redeem_readiness()
+
+                logger.info("=" * 50)
+                await self._snapshot_wallet_balance(label="session_start")
 
     def _get_scaled_bet(self) -> float:
         """Get the current base bet, scaled up based on bankroll growth.
@@ -444,7 +582,8 @@ class SimulatedTrader:
             return self.base_bet
 
         bankroll = self.state.current_bankroll if self.state else self.initial_bankroll
-        gain_pct = (bankroll - self.initial_bankroll) / self.initial_bankroll
+        baseline = self._session_start_bankroll if self._session_start_bankroll is not None else self.initial_bankroll
+        gain_pct = (bankroll - baseline) / baseline
         if gain_pct <= 0:
             return self.base_bet
 
@@ -471,7 +610,9 @@ class SimulatedTrader:
         max_bet = base * self.recovery_max_multiplier
 
         if self.recovery_sizing == "linear":
-            bet = base + self.recovery_step * losses
+            # recovery_step is a multiplier of base (e.g. 1.0 = add 1× base per loss)
+            # e.g. base=$2, losses=1 → $2 + $2×1.0 = $4; losses=2 → $6 (capped at max)
+            bet = base + base * self.recovery_step * losses
         elif self.recovery_sizing == "mart_1.5x":
             bet = base * (1.5 ** losses)
         else:
@@ -479,6 +620,12 @@ class SimulatedTrader:
 
         bet = min(bet, max_bet)
         return round(bet, 2)
+
+    def _record_daily_pnl(self, net_pnl: float):
+        """Track cumulative daily P&L for daily loss limit."""
+        if self.daily_loss_limit > 0:
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + net_pnl
 
     def _adaptive_direction_allowed(self, direction: str) -> bool:
         """Check if the given direction is allowed by the adaptive filter.
@@ -603,9 +750,17 @@ class SimulatedTrader:
             OrderResult if order was placed (and possibly filled), None otherwise.
         """
         if not self.live_trading or not self.exchange:
+            logger.debug(
+                f"[{asset}] Skipping live order: live_trading={self.live_trading}, "
+                f"exchange={'set' if self.exchange else 'None'}"
+            )
             return None
 
         if not self.exchange.supports_trading:
+            logger.warning(
+                f"[{asset}] Skipping live order: exchange.supports_trading=False "
+                f"(polymarket CLI may have failed to initialize)"
+            )
             return None
 
         try:
@@ -620,7 +775,17 @@ class SimulatedTrader:
             # Number of contracts = bet_size / entry_price
             n_contracts = bet_size / entry_price if entry_price > 0.01 else 0
             if n_contracts <= 0:
+                logger.warning(
+                    f"[{asset}] Zero contracts — bet_size={bet_size}, "
+                    f"entry_price={entry_price}, skipping live order"
+                )
                 return None
+
+            logger.info(
+                f"[{asset}] LIVE ORDER ATTEMPT: {side} {n_contracts:.1f} "
+                f"{outcome.upper()} @ {entry_price:.4f} "
+                f"(token={market.yes_token_id[:12] if outcome == 'yes' else market.no_token_id[:12]}...)"
+            )
 
             result = await self.exchange.place_order(
                 market=market,
@@ -630,6 +795,16 @@ class SimulatedTrader:
                 price=entry_price,
                 order_type="limit",
             )
+
+            # Adapter may bump size to exchange minimum
+            if result.amount > n_contracts:
+                logger.info(
+                    f"[{asset}] Order size bumped from {n_contracts:.1f} to "
+                    f"{result.amount:.1f} contracts (exchange minimum). "
+                    f"Actual cost: ${result.amount * entry_price:.2f}"
+                )
+                n_contracts = result.amount
+                trade.bet_size = n_contracts * entry_price  # update sim trade to match reality
 
             logger.info(
                 f"[{asset}] LIVE ORDER placed: {result.order_id} "
@@ -655,12 +830,12 @@ class SimulatedTrader:
             fill_contracts = result.filled if result.filled > 0 else None
             fill_fee = result.fee
 
-            # For partial fills, adjust bet_size to reflect what actually filled
+            # Log partial fill without mutating bet_size — live_entry_contracts
+            # already records what actually filled and is used in both exit paths.
             if result.status == "partial" and fill_contracts and fill_price:
-                trade.bet_size = fill_contracts * fill_price
                 logger.info(
                     f"[{asset}] PARTIAL FILL: {fill_contracts:.1f}/{n_contracts:.1f} "
-                    f"contracts. Adjusted bet: ${trade.bet_size:.2f}"
+                    f"contracts @ {fill_price:.4f} (original bet ${trade.bet_size:.2f} preserved)"
                 )
 
             # Enrich the trade with live fill data
@@ -683,7 +858,9 @@ class SimulatedTrader:
             return result
 
         except Exception as e:
-            logger.error(f"[{asset}] Live order placement failed: {e}")
+            logger.error(
+                f"[{asset}] Live order placement failed: {e}", exc_info=True
+            )
             return None  # Don't raise — simulation continues regardless
 
     async def _close_live_position(
@@ -694,25 +871,33 @@ class SimulatedTrader:
         n_contracts: float,
         trade: SimulatedTrade,
     ) -> "Optional[OrderResult]":
-        """Sell/close a live position on the exchange.
+        """Sell/close a live position on the exchange using FAK sell loop.
 
-        Places a sell order, polls for fill, and updates the trade's live_exit_*
-        fields with actual exit fill data.
+        Uses repeated Fill-And-Kill orders to drain the position, handling
+        partial fills and low liquidity gracefully. Falls back to binary
+        resolution if the position can't be fully exited.
 
         Args:
             asset: Asset symbol.
             direction: "bull" or "bear" (the original trade direction).
-            exit_price: Expected exit contract price (used as limit price).
-            n_contracts: Number of contracts to sell.
+            exit_price: Expected exit contract price (for P&L estimation).
+            n_contracts: Number of contracts to sell (from sim tracking).
             trade: The SimulatedTrade with live entry data.
 
         Returns:
-            OrderResult if exit was placed (and possibly filled), None otherwise.
+            OrderResult if exit was executed, None otherwise.
         """
         if not self.live_trading or not self.exchange:
+            logger.debug(
+                f"[{asset}] Skipping live exit: live_trading={self.live_trading}, "
+                f"exchange={'set' if self.exchange else 'None'}"
+            )
             return None
 
         if not self.exchange.supports_trading:
+            logger.warning(
+                f"[{asset}] Skipping live exit: exchange.supports_trading=False"
+            )
             return None
 
         # Verify we actually have a live position to close
@@ -729,13 +914,63 @@ class SimulatedTrader:
                 logger.warning(f"[{asset}] No cached market for live exit, skipping")
                 return None
 
-            # Use actual filled contracts if available (may differ from n_contracts
-            # due to partial fills or price difference)
-            actual_contracts = trade.live_entry_contracts or n_contracts
-
-            # Selling the same outcome we bought
+            # Determine which token we're selling
             outcome = "yes" if direction == "bull" else "no"
+            token_id = (
+                market.yes_token_id if outcome == "yes" else market.no_token_id
+            )
 
+            # Use FAK sell loop if adapter supports it (PolymarketAdapter)
+            if hasattr(self.exchange, 'sell_position_fak'):
+                logger.info(
+                    f"[{asset}] LIVE EXIT via FAK sell loop "
+                    f"(token={token_id[:16]}...)"
+                )
+                total_usdc = await self.exchange.sell_position_fak(token_id)
+
+                if total_usdc > 0:
+                    # Estimate fill price from USDC received
+                    actual_contracts = trade.live_entry_contracts or n_contracts
+                    avg_exit_price = total_usdc / actual_contracts if actual_contracts > 0 else exit_price
+                    trade.live_exit_fill_price = avg_exit_price
+                    trade.live_exit_contracts = actual_contracts
+                    trade.live_exit_fee = 0.0  # FAK fees are embedded in fill price
+                    trade.live_status = "closed"
+
+                    logger.info(
+                        f"[{asset}] LIVE EXIT FILL: "
+                        f"${total_usdc:.4f} USDC received "
+                        f"(~{actual_contracts:.1f} contracts @ ~{avg_exit_price:.4f})"
+                    )
+
+                    # Build a synthetic OrderResult for callers
+                    result = OrderResult(
+                        order_id="fak_exit",
+                        market_id=market.condition_id,
+                        outcome_id=token_id,
+                        side="sell",
+                        order_type="market",
+                        amount=actual_contracts,
+                        price=avg_exit_price,
+                        status="filled",
+                        filled=actual_contracts,
+                        remaining=0.0,
+                    )
+                else:
+                    # FAK sell got no fills — position stays open for binary resolution
+                    trade.live_status = "open"
+                    logger.warning(
+                        f"[{asset}] FAK EXIT got no fills. "
+                        f"Position will settle at binary resolution."
+                    )
+                    result = None
+
+                # Persist updated live data
+                await self.trading_db.update_trade(trade)
+                return result
+
+            # Fallback: standard limit sell + poll (for non-Polymarket adapters)
+            actual_contracts = trade.live_entry_contracts or n_contracts
             result = await self.exchange.place_order(
                 market=market,
                 side="sell",
@@ -751,12 +986,10 @@ class SimulatedTrader:
                 f"status={result.status}"
             )
 
-            # Poll for fill — cancel if not filled (we need to exit before window ends)
             result = await self._poll_order_fill(
                 result, max_wait=15.0, interval=1.0, cancel_if_unfilled=True
             )
 
-            # Update the trade's live exit fields
             trade.live_exit_order_id = result.order_id
 
             if result.status in ("filled", "partial"):
@@ -771,7 +1004,6 @@ class SimulatedTrader:
                     f"fee={result.fee}"
                 )
             elif result.status in ("cancelled", "timeout", "unverified"):
-                # Exit order didn't fill — position stays open for binary resolution
                 trade.live_status = "open"
                 logger.warning(
                     f"[{asset}] EXIT ORDER NOT FILLED (status={result.status}). "
@@ -780,13 +1012,11 @@ class SimulatedTrader:
             else:
                 trade.live_status = "exit_placed"
 
-            # Persist updated live data
             await self.trading_db.update_trade(trade)
-
             return result
 
         except Exception as e:
-            logger.error(f"[{asset}] Live exit order failed: {e}")
+            logger.error(f"[{asset}] Live exit order failed: {e}", exc_info=True)
             return None
 
     async def _poll_order_fill(
@@ -830,6 +1060,8 @@ class SimulatedTrader:
             try:
                 # Use fetch_order to get real fill data
                 updated = await self.exchange.fetch_order(order.order_id)
+                if updated.status:
+                    updated.status = updated.status.lower()
 
                 if updated.status in ("filled", "matched", "closed"):
                     # Fully filled — copy actual fill data
@@ -869,7 +1101,7 @@ class SimulatedTrader:
                     return order
 
             except Exception as e:
-                logger.debug(f"fetch_order poll failed: {e}")
+                logger.warning(f"fetch_order poll failed ({elapsed:.1f}s): {e}")
                 # Fall back to open orders check
                 try:
                     open_orders = await self.exchange.fetch_open_orders()
@@ -897,8 +1129,8 @@ class SimulatedTrader:
                                 f"MANUAL CHECK REQUIRED — do not trust this fill."
                             )
                         return order
-                except Exception:
-                    pass
+                except Exception as e2:
+                    logger.warning(f"fetch_open_orders fallback also failed: {e2}")
 
         # Timed out — handle partial fills and optional cancellation
         if order.status != "filled":
@@ -1017,13 +1249,224 @@ class SimulatedTrader:
                     f"{prefix}Wallet balance snapshot: ${balance:.2f}"
                 )
 
+                # Capture session-start balance once (baseline for bet scaling)
+                if self._session_start_bankroll is None:
+                    self._session_start_bankroll = balance
+                    logger.info(f"Session-start bankroll anchored at ${balance:.2f}")
+
+                    # On a fresh live session with no prior trades, anchor
+                    # state.initial_bankroll to the real wallet balance rather than
+                    # the config value. Without this, return % shows -90% immediately
+                    # if the wallet has less than the config's initial_bankroll.
+                    if self.state and self.state.total_trades == 0 and balance != self.state.initial_bankroll:
+                        logger.info(
+                            f"Live session: adjusting initial_bankroll "
+                            f"${self.state.initial_bankroll:.2f} (config) → ${balance:.2f} (wallet)"
+                        )
+                        self.state.initial_bankroll = balance
+                        self.state.peak_bankroll = balance
+                        await self.trading_db.save_state(self.state)
+
                 # Use wallet as source of truth for bankroll
                 if self.state:
                     self.state.current_bankroll = balance
             else:
-                logger.debug("Wallet balance snapshot: unavailable")
+                logger.debug("Wallet balance snapshot: unavailable (keeping last known)")
         except Exception as e:
-            logger.warning(f"Wallet balance snapshot failed: {e}")
+            logger.warning(f"Wallet balance snapshot failed (keeping last known): {e}")
+
+    async def _check_redeem_readiness(self):
+        """Check redemption prerequisites at startup and log clear status."""
+        issues = []
+
+        try:
+            from ..clients.polymarket_relayer import (
+                RELAYER_ENABLED,
+                cookies_valid,
+                refresh_cookies,
+                get_circuit_status,
+            )
+        except ImportError:
+            logger.warning(
+                "  Redeem: DISABLED — missing dependencies "
+                "(polymarket_relayer/polymarket_claims not installed)"
+            )
+            return
+
+        if not RELAYER_ENABLED:
+            issues.append(
+                "POLYMARKET_PRIVATE_KEY not set — relayer cannot sign requests"
+            )
+
+        # Attempt cookie refresh (will try Magic auth if configured)
+        if RELAYER_ENABLED and not cookies_valid():
+            refresh_cookies()
+
+        if RELAYER_ENABLED and not cookies_valid():
+            issues.append(
+                "No Polymarket session cookies — gasless relayer cannot submit.\n"
+                "           Fix: set POLYMARKET_AUTH_TYPE=magic in .env, OR\n"
+                "           inject cookies via set_session_cookies(), OR\n"
+                "           redeem manually at polymarket.com/portfolio"
+            )
+
+        wallet = self._funder_address
+        if not wallet and self.exchange and hasattr(self.exchange, 'get_funder_address'):
+            wallet = self.exchange.get_funder_address()
+        if not wallet:
+            issues.append(
+                "No funder address — cannot query positions for redemption.\n"
+                "           Fix: set POLYMARKET_FUNDER_ADDRESS in .env"
+            )
+
+        circuit = get_circuit_status()
+        if circuit.get("open"):
+            issues.append(
+                f"Relayer circuit breaker OPEN — resets in {circuit.get('secondsRemaining', '?')}s"
+            )
+
+        if issues:
+            logger.warning(
+                "  Redeem: DEGRADED — auto-redemption will be skipped:\n"
+                + "\n".join(f"    - {i}" for i in issues)
+            )
+            self._redeem_creds_warned_at = datetime.now(timezone.utc)
+        else:
+            logger.info("  Redeem: OK — cookies valid, relayer ready")
+
+    async def try_redeem_settled(self):
+        """Check for and redeem settled positions after window completes.
+
+        Two sweep modes:
+        1. **Winners** (every 15 min): redeem positions with value (redeem_losers=False)
+        2. **Losers** (every hour): clean up zero-value settled positions (redeem_losers=True)
+
+        Uses the Polymarket gasless relayer. Called from the window-complete
+        callback when redeem_on_window_complete=True.
+        """
+        if not self.live_trading or not self.redeem_on_window_complete:
+            return
+
+        now = datetime.now(timezone.utc)
+
+        # Determine which sweep to run based on timers
+        winner_due = (
+            self._last_redeem_time is None
+            or (now - self._last_redeem_time).total_seconds() >= 900  # 15 min
+        )
+        loser_due = (
+            self._last_loser_cleanup_time is None
+            or (now - self._last_loser_cleanup_time).total_seconds() >= 3600  # 1 hour
+        )
+
+        if not winner_due and not loser_due:
+            return
+
+        # Resolve wallet address for position queries
+        wallet = self._funder_address
+        if not wallet and self.exchange and hasattr(self.exchange, 'get_funder_address'):
+            wallet = self.exchange.get_funder_address()
+        if not wallet:
+            logger.debug("No funder address for redeem check")
+            return
+
+        try:
+            from ..clients.polymarket_claims import (
+                fetch_positions,
+                sweep_and_redeem_claimables,
+            )
+            from ..clients.polymarket_relayer import (
+                RELAYER_ENABLED,
+                cookies_valid,
+                get_circuit_status,
+            )
+        except ImportError as e:
+            logger.debug(f"Redeem dependencies not available: {e}")
+            return
+
+        if not RELAYER_ENABLED:
+            logger.debug("Relayer not enabled, skipping redeem")
+            return
+
+        circuit = get_circuit_status()
+        if circuit.get("open"):
+            logger.debug(
+                f"Relayer circuit open — resets in {circuit.get('secondsRemaining', '?')}s"
+            )
+            return
+
+        # Try to refresh cookies (e.g. Magic auth) before giving up
+        from ..clients.polymarket_relayer import refresh_cookies
+        if not cookies_valid():
+            refresh_cookies()
+        if not cookies_valid():
+            # Warn once at first failure, then re-warn every 6 hours
+            should_warn = (
+                self._redeem_creds_warned_at is None
+                or (now - self._redeem_creds_warned_at).total_seconds() >= 21600
+            )
+            if should_warn:
+                logger.warning(
+                    "Redeem skipped: no Polymarket session cookies.\n"
+                    "  Fix: set POLYMARKET_AUTH_TYPE=magic in .env, OR\n"
+                    "  inject cookies via set_session_cookies(), OR\n"
+                    "  redeem manually at polymarket.com/portfolio"
+                )
+                self._redeem_creds_warned_at = now
+            return
+
+        # --- Winner sweep (every 15 min) ---
+        if winner_due:
+            try:
+                positions = await fetch_positions(wallet)
+                redeemable = [
+                    p for p in positions
+                    if p.get("redeemable") is True
+                    and float(p.get("currentValue", 0) or 0) > 0
+                ]
+
+                if redeemable:
+                    total_value = sum(
+                        float(p.get("currentValue", 0) or 0) for p in redeemable
+                    )
+                    logger.info(
+                        f"Found {len(redeemable)} redeemable winner(s) "
+                        f"(~${total_value:.2f} USDC)"
+                    )
+                    await sweep_and_redeem_claimables(wallet, redeem_losers=False)
+                    await asyncio.sleep(3)
+                    await self._snapshot_wallet_balance(label="post_redeem")
+                    logger.info("Winner redeem sweep completed")
+
+                self._last_redeem_time = now
+
+            except Exception as e:
+                logger.error(f"Winner redeem sweep failed: {e}", exc_info=True)
+                self._last_redeem_time = now
+
+        # --- Loser cleanup (every hour) ---
+        if loser_due:
+            try:
+                positions = await fetch_positions(wallet)
+                losers = [
+                    p for p in positions
+                    if p.get("redeemable") is True
+                    and float(p.get("currentValue", 0) or 0) == 0
+                    and float(p.get("size", 0) or 0) > 0
+                ]
+
+                if losers:
+                    logger.info(
+                        f"Hourly cleanup: {len(losers)} zero-value loser(s) to clear"
+                    )
+                    await sweep_and_redeem_claimables(wallet, redeem_losers=True)
+                    logger.info("Loser cleanup sweep completed")
+
+                self._last_loser_cleanup_time = now
+
+            except Exception as e:
+                logger.error(f"Loser cleanup sweep failed: {e}", exc_info=True)
+                self._last_loser_cleanup_time = now
 
     async def on_sample_at_signal(self, asset: str, sample, state):
         """Handle sample at t=7.5 - check for initial signal (two-stage) or direct entry (single).
@@ -1156,10 +1599,21 @@ class SimulatedTrader:
                 f"entry={entry_price:.3f}, bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
-            # Place live order if enabled
-            await self._place_live_order(
+            # Place live order if enabled; abort sim trade if exchange rejects
+            live_result = await self._place_live_order(
                 asset, direction, entry_price, bet_size, trade=trade,
             )
+            if live_result is None and self.live_trading:
+                # Exchange order failed — don't keep phantom sim position
+                logger.warning(
+                    f"[{asset}] Live order failed — removing sim trade "
+                    f"(no position on exchange)"
+                )
+                self.open_trades.pop(asset, None)
+                trade.outcome = "cancelled"
+                trade.live_status = "entry_failed"
+                await self.trading_db.update_trade(trade)
+                return
 
         except Exception as e:
             logger.error(f"[{asset}] Error in trade confirmation: {e}", exc_info=True)
@@ -1330,10 +1784,21 @@ class SimulatedTrader:
                 f"entry={entry_price:.3f}, bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
-            # Place live order if enabled
-            await self._place_live_order(
+            # Place live order if enabled; abort sim trade if exchange rejects
+            live_result = await self._place_live_order(
                 asset, direction, entry_price, bet_size, trade=trade,
             )
+            if live_result is None and self.live_trading:
+                # Exchange order failed — don't keep phantom sim position
+                logger.warning(
+                    f"[{asset}] Live order failed — removing sim trade "
+                    f"(no position on exchange)"
+                )
+                self.open_trades.pop(asset, None)
+                trade.outcome = "cancelled"
+                trade.live_status = "entry_failed"
+                await self.trading_db.update_trade(trade)
+                return
 
         except Exception as e:
             logger.error(f"[{asset}] Error in trade entry: {e}", exc_info=True)
@@ -1499,10 +1964,21 @@ class SimulatedTrader:
                 f"bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
-            # Place live order if enabled
-            await self._place_live_order(
+            # Place live order if enabled; abort sim trade if exchange rejects
+            live_result = await self._place_live_order(
                 asset, direction, entry_price, bet_size, trade=trade,
             )
+            if live_result is None and self.live_trading:
+                # Exchange order failed — don't keep phantom sim position
+                logger.warning(
+                    f"[{asset}] Live order failed — removing sim trade "
+                    f"(no position on exchange)"
+                )
+                self.open_trades.pop(asset, None)
+                trade.outcome = "cancelled"
+                trade.live_status = "entry_failed"
+                await self.trading_db.update_trade(trade)
+                return
 
         except Exception as e:
             logger.error(f"[{asset}] Error in contrarian entry: {e}", exc_info=True)
@@ -1527,6 +2003,15 @@ class SimulatedTrader:
                 return
 
             trade = self.open_trades[asset]
+
+            # Tiered exit: if this trade is flagged for binary resolution, skip early exit
+            if self._trade_use_resolution.get(asset, False):
+                logger.info(
+                    f"[{asset}] Tiered exit: consensus was strong, "
+                    f"holding to binary resolution (skipping t12.5 exit)"
+                )
+                return
+
             pm_yes = sample.pm_yes_price
 
             if pm_yes is None:
@@ -1545,7 +2030,13 @@ class SimulatedTrader:
                 logger.warning(f"[{asset}] Entry contract price too low, skipping exit")
                 return
 
-            n_contracts = trade.bet_size / entry_contract
+            # Use actual fill count for live trades (handles partial fills correctly);
+            # fall back to estimated count for simulation.
+            n_contracts = (
+                trade.live_entry_contracts
+                if (self.live_trading and trade.live_entry_contracts)
+                else trade.bet_size / entry_contract
+            )
 
             # Place live exit order FIRST so we get actual fill data
             exit_result = await self._close_live_position(
@@ -1603,13 +2094,22 @@ class SimulatedTrader:
                 wallet_balance = await self._fetch_wallet_balance()
                 if wallet_balance is not None:
                     self.state.current_bankroll = wallet_balance
-                    logger.info(f"[{asset}] Wallet balance (source of truth): ${wallet_balance:.2f}")
+                    # Wallet-derived P&L — the only source of truth when live
+                    self.state.total_pnl = wallet_balance - self.state.initial_bankroll
+                    logger.info(
+                        f"[{asset}] Wallet balance (source of truth): ${wallet_balance:.2f}  "
+                        f"P&L=${self.state.total_pnl:+.2f}"
+                    )
                 else:
                     self.state.current_bankroll += net_pnl
+                    self.state.total_pnl += net_pnl
             else:
                 self.state.current_bankroll += net_pnl
+                self.state.total_pnl += net_pnl
 
-            self.state.total_pnl += net_pnl
+            # Track daily P&L for daily loss limit
+            self._record_daily_pnl(net_pnl)
+
             self.state.total_trades += 1
 
             won = net_pnl > 0
@@ -1698,6 +2198,9 @@ class SimulatedTrader:
             # Remove from open trades
             del self.open_trades[asset]
 
+            # Update group loss counter for circuit breaker
+            self._update_group_loss_counter(asset, net_pnl)
+
             # Log result
             result_str = "WIN" if won else "LOSS"
             pnl_str = f"+${net_pnl:.2f}" if net_pnl >= 0 else f"-${abs(net_pnl):.2f}"
@@ -1719,6 +2222,14 @@ class SimulatedTrader:
     # =========================================================================
     # Contrarian + Consensus Strategy Methods
     # =========================================================================
+
+    async def on_sample_at_consensus_t0(self, asset: str, sample, state):
+        """Record pm_yes at t0 for momentum/sweet-spot checks."""
+        pm_yes = sample.pm_yes_price
+        if pm_yes is not None:
+            self._consensus_t0_pm[asset] = pm_yes
+        else:
+            self._consensus_t0_pm.pop(asset, None)
 
     async def on_sample_at_consensus_entry(self, asset: str, sample, state):
         """Buffer sample at consensus entry time. Once all assets arrive, evaluate consensus.
@@ -1811,6 +2322,31 @@ class SimulatedTrader:
             except (ValueError, IndexError):
                 pass  # Can't parse date, proceed anyway
 
+        # Hour-of-day filter (UTC)
+        if self.allowed_hours:
+            try:
+                hour = int(time_key[9:11])  # "YYYYMMDD_HHMM" → positions 9-10 = "HH"
+                if hour not in self.allowed_hours:
+                    logger.info(
+                        f"[CONSENSUS] Skipping — UTC hour {hour:02d} not in allowed_hours"
+                    )
+                    for asset in buffer:
+                        self._last_signals[asset] = "skip-hour"
+                    return
+            except (ValueError, IndexError):
+                pass  # Can't parse hour, proceed anyway
+
+        # Circuit breaker: skip window if too many consecutive group losses
+        if self.max_consec_losses > 0 and self._group_consec_losses >= self.max_consec_losses:
+            logger.info(
+                f"[CONSENSUS] CIRCUIT BREAKER: {self._group_consec_losses} consecutive "
+                f"group losses → skipping and resetting counter"
+            )
+            self._group_consec_losses = 0
+            for asset in buffer:
+                self._last_signals[asset] = "skip-circuit-break"
+            return
+
         # Regime filter: skip if majority of assets had high/extreme previous window
         if self.skip_regimes:
             skip_count = sum(
@@ -1874,6 +2410,35 @@ class SimulatedTrader:
                 self._last_signals[asset] = None
             return
 
+        # Prior momentum filter: require at least 1 asset with trend still building
+        # For bear: prev_pm moved UP last window (prev - prev2 > threshold)
+        # For bull: prev_pm moved DOWN last window (prev2 - prev > threshold)
+        # Uses prev_window_pm and prev2_window_pm — both t0-valid (no look-ahead)
+        if self.prior_mom_filter:
+            n_confirm_prior = 0
+            for asset in buffer:
+                p1 = self._prev_window_pm.get(asset)
+                p2 = self._prev2_window_pm.get(asset)
+                if p1 is None or p2 is None:
+                    continue
+                delta = p1 - p2
+                if contrarian_dir == "bear" and delta > self.prior_mom_min:
+                    n_confirm_prior += 1
+                elif contrarian_dir == "bull" and delta < -self.prior_mom_min:
+                    n_confirm_prior += 1
+            if n_confirm_prior < 1:
+                logger.info(
+                    f"[CONSENSUS] Prior momentum filter FAIL: 0/{len(buffer)} assets "
+                    f"had |Δprev| > {self.prior_mom_min} for {contrarian_dir}"
+                )
+                for asset in buffer:
+                    self._last_signals[asset] = f"{contrarian_dir}-priormom-fail"
+                return
+            logger.info(
+                f"[CONSENSUS] Prior momentum filter PASS: {n_confirm_prior}/{len(buffer)} "
+                f"assets had prev window building {contrarian_dir}"
+            )
+
         # Phase 2: Count assets confirming reversal in CURRENT window
         confirming_assets = []
         for asset, data in buffer.items():
@@ -1903,6 +2468,79 @@ class SimulatedTrader:
             f"confirm {contrarian_dir.upper()} reversal"
         )
 
+        # Phase 2.5: Sweet spot filter — require t0 pm_yes near 0.50
+        asset_momentum = {}  # asset -> signed momentum (for confidence scaling)
+        if self.sweet_spot_band > 0:
+            sweet_pass = []
+            for asset in confirming_assets:
+                t0_pm = self._consensus_t0_pm.get(asset)
+                if t0_pm is not None and abs(t0_pm - 0.50) <= self.sweet_spot_band:
+                    sweet_pass.append(asset)
+                else:
+                    self._last_signals[asset] = f"{contrarian_dir}-sweet-fail"
+                    logger.debug(
+                        f"[{asset}] Sweet spot filter: t0={t0_pm} "
+                        f"outside band ±{self.sweet_spot_band}"
+                    )
+            if len(sweet_pass) < len(confirming_assets):
+                logger.info(
+                    f"[CONSENSUS] Sweet spot filter: {len(sweet_pass)}/{len(confirming_assets)} "
+                    f"assets pass (t0 within ±{self.sweet_spot_band} of 0.50)"
+                )
+            confirming_assets = sweet_pass
+
+        # Phase 3: Momentum confirmation — require price movement 0→entry confirms direction
+        if self.momentum_min_threshold > 0:
+            mom_pass = []
+            for asset in confirming_assets:
+                t0_pm = self._consensus_t0_pm.get(asset)
+                current_pm = buffer[asset]["pm_yes"]
+                if t0_pm is None or current_pm is None:
+                    self._last_signals[asset] = f"{contrarian_dir}-mom-nodata"
+                    continue
+                momentum = current_pm - t0_pm  # signed: positive = price rising
+                asset_momentum[asset] = momentum
+                if contrarian_dir == "bull" and momentum >= self.momentum_min_threshold:
+                    mom_pass.append(asset)
+                elif contrarian_dir == "bear" and momentum <= -self.momentum_min_threshold:
+                    mom_pass.append(asset)
+                else:
+                    self._last_signals[asset] = f"{contrarian_dir}-mom-fail"
+                    logger.debug(
+                        f"[{asset}] Momentum filter: {contrarian_dir} needs "
+                        f"{'>=+' if contrarian_dir == 'bull' else '<=-'}"
+                        f"{self.momentum_min_threshold}, got {momentum:+.4f}"
+                    )
+            logger.info(
+                f"[CONSENSUS] Momentum filter (>={self.momentum_min_threshold}): "
+                f"{len(mom_pass)}/{len(confirming_assets)} assets pass"
+            )
+            confirming_assets = mom_pass
+        else:
+            # No momentum filter — compute momentum anyway for confidence scaling
+            for asset in confirming_assets:
+                t0_pm = self._consensus_t0_pm.get(asset)
+                current_pm = buffer[asset]["pm_yes"]
+                if t0_pm is not None and current_pm is not None:
+                    asset_momentum[asset] = current_pm - t0_pm
+
+        if not confirming_assets:
+            logger.info(f"[CONSENSUS] No assets remain after filters")
+            return
+
+        # Daily loss limit check
+        if self.daily_loss_limit > 0:
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily_pnl = self._daily_pnl.get(today, 0.0)
+            if daily_pnl <= -self.daily_loss_limit:
+                logger.info(
+                    f"[CONSENSUS] DAILY LIMIT: P&L today ${daily_pnl:.2f} "
+                    f"exceeds -${self.daily_loss_limit:.2f} limit. Skipping."
+                )
+                for asset in buffer:
+                    self._last_signals[asset] = f"{contrarian_dir}-daily-limit"
+                return
+
         # Adaptive direction filter: skip if this direction isn't favored
         if not self._adaptive_direction_allowed(contrarian_dir):
             logger.info(
@@ -1913,21 +2551,38 @@ class SimulatedTrader:
                 self._last_signals[asset] = f"{contrarian_dir}-adapt-skip"
             return
 
-        logger.info(f"[CONSENSUS] → ENTERING TRADES")
+        logger.info(f"[CONSENSUS] → ENTERING TRADES ({len(confirming_assets)} assets)")
+
+        # Tiered exit: use binary resolution if consensus is strong enough
+        use_resolution = (
+            self.tiered_exit and len(confirming_assets) >= self.tiered_resolution_threshold
+        ) or self.hold_to_resolution
+        if self.tiered_exit:
+            logger.info(
+                f"[CONSENSUS] Tiered exit: n_agree={len(confirming_assets)}, "
+                f"threshold={self.tiered_resolution_threshold} → "
+                f"{'RESOLUTION' if use_resolution else 'EARLY EXIT'}"
+            )
 
         # Enter trades for all confirming assets
         for asset in confirming_assets:
             await self._enter_consensus_trade(
-                asset, contrarian_dir, buffer[asset]
+                asset, contrarian_dir, buffer[asset],
+                momentum=asset_momentum.get(asset),
+                time_key=time_key,
+                use_resolution=use_resolution,
             )
 
         # Mark non-confirming assets
         for asset in buffer:
-            if asset not in confirming_assets:
+            if asset not in confirming_assets and asset not in self._last_signals:
                 self._last_signals[asset] = f"{contrarian_dir}-no-confirm"
 
     async def _enter_consensus_trade(
-        self, asset: str, direction: str, data: dict
+        self, asset: str, direction: str, data: dict,
+        momentum: float = None,
+        time_key: str = None,
+        use_resolution: bool = False,
     ):
         """Enter a single consensus trade for an asset."""
         try:
@@ -1955,15 +2610,33 @@ class SimulatedTrader:
             else:
                 entry_price = 1.0 - pm_yes  # buying NO
 
-            # Bet size (recovery-aware for contrarian modes)
-            bet_size = min(
-                self._get_recovery_bet(asset),
-                self.state.current_bankroll * self.max_bet_pct,
-            )
+            # --- Bet sizing with all modifiers ---
+            base = self._get_recovery_bet(asset)
+
+            # 1. Confidence scaling (based on momentum strength)
+            confidence_scale = 1.0
+            if self.confidence_scaling_max > 1.0 and momentum is not None:
+                abs_mom = abs(momentum)
+                max_extra = self.confidence_scaling_max - 1.0
+                confidence_scale = 1.0 + min(abs_mom / self.confidence_scaling_ref, max_extra)
+
+            # 2. Asymmetric direction sizing
+            dir_mult = self.bear_size_mult if direction == "bear" else self.bull_size_mult
+
+            # 3. Anti-martingale (scale up after consecutive wins)
+            anti_mart_scale = 1.0
+            if self.anti_mart_mult > 0 and self.state.current_win_streak > 0:
+                anti_mart_scale = min(
+                    self.anti_mart_mult ** self.state.current_win_streak,
+                    self.anti_mart_max,
+                )
+
+            bet_size = base * confidence_scale * dir_mult * anti_mart_scale
+            bet_size = min(bet_size, self.state.current_bankroll * self.max_bet_pct)
 
             # Compute signal metadata
             _spot_vel = sample.spot_price_change_from_open
-            _pm_mom = abs(pm_yes - 0.50)  # distance from neutral at entry
+            _pm_mom = abs(momentum) if momentum is not None else abs(pm_yes - 0.50)
 
             # Create trade
             trade = SimulatedTrade(
@@ -1985,19 +2658,51 @@ class SimulatedTrader:
             await self.trading_db.insert_trade(trade)
             self.open_trades[asset] = trade
 
+            # Per-trade resolution mode (tiered exit)
+            self._trade_use_resolution[asset] = use_resolution
+
+            # Group loss tracking (circuit breaker)
+            if time_key and self.max_consec_losses > 0:
+                self._trade_group_key[asset] = time_key
+                self._group_entered_assets.setdefault(time_key, set()).add(asset)
+                self._group_pnl_acc.setdefault(time_key, 0.0)
+
             # Save state
             await self.trading_db.save_state(self.state)
+
+            # Build sizing detail string
+            sizing_parts = [f"bet=${bet_size:.2f}"]
+            if confidence_scale > 1.001:
+                sizing_parts.append(f"conf={confidence_scale:.2f}x")
+            if dir_mult != 1.0:
+                sizing_parts.append(f"dir={dir_mult:.2f}x")
+            if anti_mart_scale > 1.001:
+                sizing_parts.append(f"antimart={anti_mart_scale:.2f}x")
+            if momentum is not None:
+                sizing_parts.append(f"mom={momentum:+.4f}")
+            sizing_str = " ".join(sizing_parts)
 
             logger.info(
                 f"[{asset}] OPENED CONSENSUS {direction.upper()} position: "
                 f"entry_contract={entry_price:.3f} (pm_yes={pm_yes:.3f}), "
-                f"bet=${bet_size:.2f}, window={sample.window_id}"
+                f"{sizing_str}, window={sample.window_id}"
             )
 
-            # Place live order if enabled
-            await self._place_live_order(
+            # Place live order if enabled; abort sim trade if exchange rejects
+            live_result = await self._place_live_order(
                 asset, direction, entry_price, bet_size, trade=trade,
             )
+            if live_result is None and self.live_trading:
+                # Exchange order failed — don't keep phantom sim position
+                logger.warning(
+                    f"[{asset}] Live order failed — removing sim trade "
+                    f"(no position on exchange)"
+                )
+                self.open_trades.pop(asset, None)
+                trade.outcome = "cancelled"
+                trade.live_status = "entry_failed"
+                await self.trading_db.update_trade(trade)
+                return
 
         except Exception as e:
             logger.error(f"[{asset}] Error in consensus trade entry: {e}", exc_info=True)
@@ -2125,10 +2830,21 @@ class SimulatedTrader:
                 f"bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
-            # Place live order if enabled
-            await self._place_live_order(
+            # Place live order if enabled; abort sim trade if exchange rejects
+            live_result = await self._place_live_order(
                 asset, direction, entry_price, bet_size, trade=trade,
             )
+            if live_result is None and self.live_trading:
+                # Exchange order failed — don't keep phantom sim position
+                logger.warning(
+                    f"[{asset}] Live order failed — removing sim trade "
+                    f"(no position on exchange)"
+                )
+                self.open_trades.pop(asset, None)
+                trade.outcome = "cancelled"
+                trade.live_status = "entry_failed"
+                await self.trading_db.update_trade(trade)
+                return
 
         except Exception as e:
             logger.error(f"[{asset}] Error in accel_dbl entry: {e}", exc_info=True)
@@ -2316,10 +3032,21 @@ class SimulatedTrader:
                 f"window={sample.window_id}"
             )
 
-            # Place live order if enabled
-            await self._place_live_order(
+            # Place live order if enabled; abort sim trade if exchange rejects
+            live_result = await self._place_live_order(
                 asset, direction, entry_price, bet_size, trade=trade,
             )
+            if live_result is None and self.live_trading:
+                # Exchange order failed — don't keep phantom sim position
+                logger.warning(
+                    f"[{asset}] Live order failed — removing sim trade "
+                    f"(no position on exchange)"
+                )
+                self.open_trades.pop(asset, None)
+                trade.outcome = "cancelled"
+                trade.live_status = "entry_failed"
+                await self.trading_db.update_trade(trade)
+                return
 
         except Exception as e:
             logger.error(f"[{asset}] Error in combo trade entry: {e}", exc_info=True)
@@ -2594,10 +3321,21 @@ class SimulatedTrader:
                 f"bet=${bet_size:.2f}, window={sample.window_id}"
             )
 
-            # Place live order if enabled
-            await self._place_live_order(
+            # Place live order if enabled; abort sim trade if exchange rejects
+            live_result = await self._place_live_order(
                 asset, direction, entry_price, bet_size, trade=trade,
             )
+            if live_result is None and self.live_trading:
+                # Exchange order failed — don't keep phantom sim position
+                logger.warning(
+                    f"[{asset}] Live order failed — removing sim trade "
+                    f"(no position on exchange)"
+                )
+                self.open_trades.pop(asset, None)
+                trade.outcome = "cancelled"
+                trade.live_status = "entry_failed"
+                await self.trading_db.update_trade(trade)
+                return
 
         except Exception as e:
             logger.error(f"[{asset}] Error in triple trade entry: {e}", exc_info=True)
@@ -2605,6 +3343,46 @@ class SimulatedTrader:
     async def on_sample_at_triple_exit(self, asset: str, sample, state):
         """Handle triple_filter exit — same early-exit P&L as contrarian."""
         await self.on_sample_at_contrarian_exit(asset, sample, state)
+
+    def _update_group_loss_counter(self, asset: str, net_pnl: float) -> None:
+        """Update group-level consecutive loss counter for the circuit breaker.
+
+        Called whenever a consensus trade closes (early exit or binary resolution).
+        Cleans up per-trade state and, once the last trade in a group resolves,
+        updates _group_consec_losses used by max_consec_losses in _evaluate_consensus.
+
+        Args:
+            asset: Asset that just closed its trade
+            net_pnl: Net P&L of the closed trade
+        """
+        # Always clean up per-trade resolution flag
+        self._trade_use_resolution.pop(asset, None)
+
+        # Only track group losses if circuit breaker is enabled
+        group_key = self._trade_group_key.pop(asset, None)
+        if group_key is None or self.max_consec_losses <= 0:
+            return
+
+        # Accumulate P&L for this group
+        self._group_pnl_acc[group_key] = self._group_pnl_acc.get(group_key, 0.0) + net_pnl
+
+        # Remove this asset from the group's pending set
+        group_assets = self._group_entered_assets.get(group_key)
+        if group_assets is not None:
+            group_assets.discard(asset)
+            if not group_assets:
+                # All trades from this group have resolved — update streak
+                group_pnl = self._group_pnl_acc.pop(group_key, 0.0)
+                self._group_entered_assets.pop(group_key, None)
+                if group_pnl > 0:
+                    self._group_consec_losses = 0
+                else:
+                    self._group_consec_losses += 1
+                logger.info(
+                    f"[GROUP {group_key}] All trades closed: "
+                    f"P&L=${group_pnl:.2f}, "
+                    f"consecutive losses={self._group_consec_losses}"
+                )
 
     async def on_window_complete(self, asset: str, window: Window):
         """Handle window completion - resolve open trades and track previous window.
@@ -2658,15 +3436,29 @@ class SimulatedTrader:
                     self._prev_window_regime[asset] = regime
 
             # Resolve any open position for this asset (non-contrarian modes)
-            # Contrarian-family trades are already closed at exit time
+            # Contrarian-family trades are already closed at exit time, UNLESS
+            # hold_to_resolution=True or this trade was flagged for tiered exit.
             if asset in self.open_trades:
                 if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
-                    # Trade wasn't closed at exit time (missed exit?)
-                    # Fall back to binary resolution
-                    logger.warning(
-                        f"[{asset}] {self.entry_mode} trade still open at window complete! "
-                        f"Resolving at binary outcome as fallback."
+                    use_res = (
+                        self.hold_to_resolution
+                        or self._trade_use_resolution.get(asset, False)
                     )
+                    if use_res:
+                        mode = (
+                            "tiered_exit"
+                            if self._trade_use_resolution.get(asset, False)
+                            else "hold_to_resolution"
+                        )
+                        logger.info(
+                            f"[{asset}] {mode}: resolving at binary outcome"
+                        )
+                    else:
+                        # Trade wasn't closed at exit time (missed exit?)
+                        logger.warning(
+                            f"[{asset}] {self.entry_mode} trade still open at window complete! "
+                            f"Resolving at binary outcome as fallback."
+                        )
                 await self._resolve_trade(asset, window)
 
             # Clear any stale pending signals for this asset (window is done)
@@ -2762,13 +3554,22 @@ class SimulatedTrader:
             wallet_balance = await self._fetch_wallet_balance()
             if wallet_balance is not None:
                 self.state.current_bankroll = wallet_balance
-                logger.info(f"[{asset}] Wallet balance (source of truth): ${wallet_balance:.2f}")
+                # Wallet-derived P&L — the only source of truth when live
+                self.state.total_pnl = wallet_balance - self.state.initial_bankroll
+                logger.info(
+                    f"[{asset}] Wallet balance (source of truth): ${wallet_balance:.2f}  "
+                    f"P&L=${self.state.total_pnl:+.2f}"
+                )
             else:
                 self.state.current_bankroll += net_pnl
+                self.state.total_pnl += net_pnl
         else:
             self.state.current_bankroll += net_pnl
+            self.state.total_pnl += net_pnl
 
-        self.state.total_pnl += net_pnl
+        # Track daily P&L for daily loss limit
+        self._record_daily_pnl(net_pnl)
+
         self.state.total_trades += 1
 
         if won:
@@ -2851,6 +3652,9 @@ class SimulatedTrader:
 
         # Remove from open trades
         del self.open_trades[asset]
+
+        # Update group loss counter for circuit breaker
+        self._update_group_loss_counter(asset, net_pnl)
 
         # Log result
         result_str = "WIN" if won else "LOSS"
@@ -2978,6 +3782,23 @@ class SimulatedTrader:
                 "consensus_entry_time": self.consensus_entry_time,
                 "consensus_exit_time": self.consensus_exit_time,
             })
+            if self.momentum_min_threshold > 0:
+                config["momentum_min_threshold"] = self.momentum_min_threshold
+            if self.confidence_scaling_max > 1.0:
+                config["confidence_scaling_max"] = self.confidence_scaling_max
+                config["confidence_scaling_ref"] = self.confidence_scaling_ref
+            if self.daily_loss_limit > 0:
+                config["daily_loss_limit"] = self.daily_loss_limit
+            if self.bear_size_mult != 1.0 or self.bull_size_mult != 1.0:
+                config["bear_size_mult"] = self.bear_size_mult
+                config["bull_size_mult"] = self.bull_size_mult
+            if self.anti_mart_mult > 0:
+                config["anti_mart_mult"] = self.anti_mart_mult
+                config["anti_mart_max"] = self.anti_mart_max
+            if self.hold_to_resolution:
+                config["hold_to_resolution"] = True
+            if self.sweet_spot_band > 0:
+                config["sweet_spot_band"] = self.sweet_spot_band
         if self.entry_mode == "accel_dbl":
             config.update({
                 "accel_neutral_band": self.accel_neutral_band,
