@@ -152,10 +152,13 @@ class Application:
 
         logger.info("Initializing trading engine...")
 
-        # Use trading.db, falling back to legacy sim_trading.db if it exists
-        trading_db_path = self.data_dir / "trading.db"
+        # Use a configurable DB name so multiple instances don't share state.
+        # Defaults to "trading" (→ trading.db) to preserve existing behaviour.
+        db_name = self.trading_config.get("trading_db_name", "trading")
+        trading_db_path = self.data_dir / f"{db_name}.db"
+        # One-time migration from legacy sim_trading.db for the default instance only
         legacy_db_path = self.data_dir / "sim_trading.db"
-        if not trading_db_path.exists() and legacy_db_path.exists():
+        if db_name == "trading" and not trading_db_path.exists() and legacy_db_path.exists():
             logger.info(f"Migrating legacy database: {legacy_db_path} → {trading_db_path}")
             legacy_db_path.rename(trading_db_path)
         self.trading_db = TradingDatabase(trading_db_path)

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import dataclasses
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
@@ -215,6 +216,12 @@ class TradingConfig:
     # Data directory
     data_dir: str = "data"
 
+    # Trading database name (without .db extension).
+    # Each instance must use a unique name so they don't share state.
+    # e.g. "trading_B1", "trading_B2", "trading_B3"
+    # Defaults to "trading" (same as legacy behaviour).
+    trading_db_name: str = "trading"
+
     # Dashboard settings
     show_dashboard: bool = True
     dashboard_refresh_rate: float = 2.0
@@ -304,6 +311,7 @@ class TradingConfig:
             "max_consec_losses": self.max_consec_losses,
             "allowed_hours": self.allowed_hours,
             "redeem_on_window_complete": self.redeem_on_window_complete,
+            "trading_db_name": self.trading_db_name,
         }
 
     def save(self, path: Optional[Path] = None):
@@ -336,9 +344,10 @@ class TradingConfig:
             with open(path) as f:
                 data = json.load(f)
 
-            # Handle assets field specially (may be stored as list)
-            if "assets" in data and isinstance(data["assets"], list):
-                pass  # Keep as list
+            # Strip unknown keys (e.g. _strategy/_rationale annotations, old fields).
+            # This makes configs forward- and backward-compatible across schema changes.
+            known = {f.name for f in dataclasses.fields(cls)}
+            data = {k: v for k, v in data.items() if k in known}
 
             config = cls(**data)
             logger.info(f"Configuration loaded from {path}")

@@ -1,0 +1,45 @@
+{
+  "_strategy": "B1 — Conservative Signal",
+  "_rationale": "Fewest parameters, most robust. Strict thresh=0.85 generates fewer but cleaner signals. Portfolio daily_limit=$50 stops after ~2 losing groups. Flat $25 flat sizing — no bet scaling. Best risk-adjusted out-of-sample: -17.6% max DD. Maps to backtest E3_THRESH_0.85 + daily50.",
+
+  "exchange": "polymarket",
+  "live_trading": false,
+  "fee_model": "flat",
+
+  "entry_mode": "contrarian_consensus",
+  "contrarian_prev_thresh": 0.85,
+  "contrarian_bull_thresh": 0.50,
+  "contrarian_bear_thresh": 0.50,
+  "consensus_min_agree": 2,
+  "consensus_entry_time": "t0",
+  "consensus_exit_time": "t12.5",
+
+  "initial_bankroll": 1000.0,
+  "base_bet": 25.0,
+  "fee_rate": 0.01,
+  "spread_cost": 0.005,
+  "max_bet_pct": 0.05,
+
+  "anti_mart_mult": 0.0,
+  "anti_mart_max": 1.0,
+  "growth_per_win": 0.0,
+  "max_bet_multiplier": 1.0,
+  "bear_size_mult": 1.0,
+  "bull_size_mult": 1.0,
+  "confidence_scaling_max": 1.0,
+
+  "prior_mom_filter": false,
+  "prior_mom_min": 0.03,
+  "daily_loss_limit": 50.0,
+
+  "skip_regimes": [],
+  "skip_days": [],
+  "pause_windows_after_loss": 0,
+  "recovery_sizing": "none",
+  "max_consec_losses": 0,
+
+  "assets": ["BTC", "ETH", "SOL", "XRP"],
+  "trading_db_name": "trading_B1",
+  "show_dashboard": true,
+  "run_analysis": false
+}

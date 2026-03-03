@@ -245,6 +245,7 @@ class Strategy:
         # ── Sizing ─────────────────────────────────────────────────────────
         self.sizing_mode = p.get('sizing_mode', 'flat')
         self.anti_mart_mult = p.get('anti_mart_mult', 1.5)
+        self.anti_mart_max = p.get('anti_mart_max', 3.0)
         self.daily_loss_limit = p.get('daily_loss_limit', None)
 
 
@@ -260,8 +261,7 @@ def simulate(strategy, time_groups):
     daily_pnl = defaultdict(float)
     max_dd_pct = 0.0
 
-    last_bet = base_bet
-    last_won = True
+    win_streak = 0
 
     # H: circuit breaker state — tracks GROUP-level consecutive losses
     # (only counts windows where we actually took trades)
@@ -414,10 +414,10 @@ def simulate(strategy, time_groups):
 
         # ── Bet sizing ─────────────────────────────────────────────────────
         if s.sizing_mode == 'anti_mart':
-            if last_won:
-                bet = min(last_bet * s.anti_mart_mult, base_bet * 3)
+            if win_streak > 0:
+                bet = base_bet * min(s.anti_mart_mult ** win_streak, s.anti_mart_max)
             else:
-                bet = max(last_bet / s.anti_mart_mult, base_bet * 0.25)
+                bet = base_bet
         else:
             bet = base_bet
 
@@ -467,8 +467,10 @@ def simulate(strategy, time_groups):
                 'bet': trade_bet, 'net_pnl': net, 'won': won,
                 'bankroll': bankroll, 'day': day_key,
             })
-            last_bet = trade_bet
-            last_won = won
+            if won:
+                win_streak += 1
+            else:
+                win_streak = 0
 
         # ── H: Update group-level loss streak ─────────────────────────────
         if s.max_consec_losses is not None and confirming:

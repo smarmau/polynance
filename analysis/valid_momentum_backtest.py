@@ -170,6 +170,7 @@ class Strategy:
         # Bet sizing
         self.sizing_mode = p.get('sizing_mode', 'flat')
         self.anti_mart_mult = p.get('anti_mart_mult', 1.5)
+        self.anti_mart_max = p.get('anti_mart_max', 3.0)
         self.kelly_window = p.get('kelly_window', 50)
         self.kelly_fraction = p.get('kelly_fraction', 0.25)
         self.bear_size_mult = p.get('bear_size_mult', 1.0)
@@ -201,8 +202,7 @@ def simulate(strategy, time_groups):
     max_dd = 0
     max_dd_pct = 0
 
-    last_bet = base_bet
-    last_won = True
+    win_streak = 0
     recent_results = deque(maxlen=s.kelly_window if s.sizing_mode == 'kelly' else 1)
 
     entry_key = s.pm_key(s.entry_time)
@@ -296,10 +296,10 @@ def simulate(strategy, time_groups):
 
         # ── Bet sizing ─────────────────────────────────────────────────────
         if s.sizing_mode == 'anti_mart':
-            if last_won:
-                bet = min(last_bet * s.anti_mart_mult, base_bet * 3)
+            if win_streak > 0:
+                bet = base_bet * min(s.anti_mart_mult ** win_streak, s.anti_mart_max)
             else:
-                bet = max(last_bet / s.anti_mart_mult, base_bet * 0.25)
+                bet = base_bet
         elif s.sizing_mode == 'kelly':
             if len(recent_results) >= 20:
                 wins = sum(1 for r in recent_results if r > 0)
@@ -365,8 +365,10 @@ def simulate(strategy, time_groups):
                 'bankroll': bankroll, 'day': day_key,
             })
 
-            last_bet = trade_bet
-            last_won = won
+            if won:
+                win_streak += 1
+            else:
+                win_streak = 0
 
     if not trades:
         return None
