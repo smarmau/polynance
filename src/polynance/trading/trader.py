@@ -2310,7 +2310,6 @@ class SimulatedTrader:
         # Day-of-week filter (using time_key format "YYYYMMDD_HHMM")
         if self.skip_days:
             try:
-                from datetime import datetime
                 dt = datetime.strptime(time_key[:8], "%Y%m%d")
                 if dt.weekday() in self.skip_days:
                     logger.info(
