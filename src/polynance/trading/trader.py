@@ -567,6 +567,31 @@ class SimulatedTrader:
                 logger.info("=" * 50)
                 await self._snapshot_wallet_balance(label="session_start")
 
+        # Warm up prev-window tracking from historical data.
+        # _prev_window_pm and _prev2_window_pm are never persisted, so on every
+        # restart the prior_mom_filter would be blind for 2 full windows (~30 min).
+        # Pre-load them from the last 2 completed windows in each asset database.
+        if self.entry_mode in ("contrarian", "contrarian_consensus", "accel_dbl", "combo_dbl", "triple_filter"):
+            warmed = 0
+            for asset, db in self.asset_databases.items():
+                try:
+                    windows = await db.get_recent_windows(asset, limit=2, resolved_only=False)
+                    # get_recent_windows returns newest-first
+                    if len(windows) >= 1 and windows[0].pm_yes_t12_5 is not None:
+                        self._prev_window_pm[asset] = windows[0].pm_yes_t12_5
+                        if windows[0].volatility_regime:
+                            self._prev_window_regime[asset] = windows[0].volatility_regime
+                        if len(windows) >= 2 and windows[1].pm_yes_t12_5 is not None:
+                            self._prev2_window_pm[asset] = windows[1].pm_yes_t12_5
+                        warmed += 1
+                except Exception as e:
+                    logger.debug(f"[{asset}] Could not warm up prev_window_pm: {e}")
+            if warmed > 0:
+                logger.info(
+                    f"Warmed up prev_window history for {warmed} assets from DB "
+                    f"(prior_mom_filter ready immediately)"
+                )
+
     def _get_scaled_bet(self) -> float:
         """Get the current base bet, scaled up based on bankroll growth.
 
